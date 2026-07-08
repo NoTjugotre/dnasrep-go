@@ -1,0 +1,24 @@
+# dnasrep DNS redirect rules
+#
+# Copy this file to "dns.config" (next to the binary, or point at it with
+# -dns-config) to add hostnames the redirector should answer itself.
+#
+# One rule per line:
+#
+#     <name> [ip]
+#
+#   <name>  a hostname or domain suffix. A suffix matches the name itself and
+#           any subdomain, so "dnas.playstation.org" also covers
+#           "gate1.us.dnas.playstation.org".
+#   [ip]    optional target IPv4 address. If omitted, the global -redirect-ip
+#           (this server) is used.
+#
+# The most specific (longest) matching rule wins, and rules here override the
+# built-in -dns-suffix defaults for the same name. Blank lines and lines
+# starting with '#' are ignored.
+
+# The DNAS gateways -> this server (uses -redirect-ip):
+dnas.playstation.org
+
+# A KDDI game server (e.g. for some JP titles) -> a specific host:
+www01.kddi-mmbb.jp        192.168.2.30

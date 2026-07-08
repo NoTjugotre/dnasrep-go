@@ -1,0 +1,169 @@
+# dnasrep (Go)
+
+A single, dependency-free Go binary that replaces the entire **DNASrep** stack
+(dnsmasq + a weak-cipher Apache/OpenSSL build + PHP scripts). It combines:
+
+1. **DNS redirector** – answers `gate1.{jp,eu,us}.dnas.playstation.org` (i.e.
+   anything under `dnas.playstation.org`) with the server's own IP and forwards
+   all other queries to an upstream resolver. Extra names (e.g.
+   `www01.kddi-mmbb.jp`) can be added via a [`dns.config`](#dns-redirect-rules)
+   file. Replaces `etc/dnsmasq.d/dnas`.
+2. **TLS 1.0 server** – a small, purpose-built TLS 1.0 implementation
+   ([`tls10.go`](tls10.go)) that presents the original per-region certificates
+   from `etc/dnas/` and speaks the exact dialect a PS2 expects: an
+   SSLv2-compatible CLIENT-HELLO, RSA key exchange, and
+   `TLS_RSA_WITH_3DES_EDE_CBC_SHA`. Go's own `crypto/tls` cannot be used here
+   (see [Why a hand-rolled TLS 1.0 server](#why-a-hand-rolled-tls-10-server)).
+   Replaces the three Apache virtual hosts and their patched OpenSSL.
+3. **Packet replay** – ports `connect.php` (3DES-EDE-CBC encryption with keys
+   derived from the request packet) and `others.php` (raw replay) one-to-one to
+   Go. Replies are sent as **HTTP/1.0** with `Content-Type: image/gif`,
+   identical to Apache's `force-response-1.0` that keeps the PS2 from throwing
+   "error 106".
+
+Only the standard library is used (`crypto/des`, `crypto/rsa`, `crypto/md5`,
+`crypto/sha1`, `net`, …) – no `go get` required.
+
+## Building
+
+```sh
+cd dnasrep-go
+go build -o dnasrep .
+```
+
+## Running
+
+Default paths are relative to the working directory:
+
+```sh
+sudo ./dnasrep \
+  -docroot ./gate \
+  -certdir ./certs \
+  -redirect-ip 192.168.1.50        # IP the PS2 should resolve the DNAS names to
+```
+
+`sudo` is only needed because DNS on `:53` and HTTPS on `:443` are privileged ports.
+
+### Flags
+
+| Flag | Default | Meaning |
+| --- | --- | --- |
+| `-docroot` | `./gate` | document root containing `us-gw/`, `eu-gw/`, `gai-gw/`, `bbnavi/` |
+| `-certdir` | `./certs` | directory holding `cert-{jp,eu,us}[-key].pem` |
+| `-https` | `:443` | TLS listen address(es), comma-separated or repeated |
+| `-dns` | `:53` | UDP address of the DNS redirector (`""` disables DNS) |
+| `-upstream` | `1.1.1.1:53` | upstream resolver for non-DNAS queries |
+| `-redirect-ip` | auto | IP the DNAS names resolve to (default: detected outbound IP) |
+| `-dns-suffix` | `dnas.playstation.org` | domain suffix(es) to redirect |
+| `-dns-config` | `dns.config` | extra redirect rules file (see below) |
+| `-default-region` | `jp` | certificate region used when the client sends no SNI |
+
+On the PS2, set this machine as the **primary DNS**; the redirector handles the rest.
+
+## DNS redirect rules
+
+Beyond the built-in `-dns-suffix`, additional hostnames can be redirected via a
+config file (`dns.config` by default; override with `-dns-config`). A copy-ready
+template is in [`dns.config.example`](dns.config.example). One rule per line:
+
+```
+# <name> [ip]   — ip defaults to -redirect-ip (this server)
+dnas.playstation.org
+www01.kddi-mmbb.jp        192.168.2.30
+```
+
+`<name>` matches the host itself and any subdomain. The most specific (longest)
+match wins, and rules in the file override the `-dns-suffix` defaults for the
+same name. Names with no matching rule are forwarded to `-upstream`. A missing
+`dns.config` is fine (the built-in DNAS defaults still apply); a file explicitly
+passed with `-dns-config` that is missing or malformed is a startup error.
+
+## Logging
+
+Every client that reaches the server is logged:
+
+- **Connection level** – each accepted TCP connection is logged with its remote
+  IP (`https: connection from <ip>`). This captures clients even when the TLS
+  handshake later fails, which a request-level log would miss.
+- **Request level** – each decrypted HTTP request is logged with client IP,
+  method, path, and body size
+  (`https: <ip> POST /us-gw/v2.5_others (35-byte body)`).
+- **DNS** – each redirected name is logged (`dns: <name> -> <ip> (redirected)`).
+
+Logs go to standard error; redirect them to a file or your init system as needed.
+
+## Why a hand-rolled TLS 1.0 server
+
+A PS2 DNAS client opens the handshake with an **SSLv2-compatible CLIENT-HELLO**:
+a message wrapped in the old 2-byte SSLv2 record framing (`0x80 …`) that offers
+**TLS 1.0** and `TLS_RSA_WITH_3DES_EDE_CBC_SHA` / `TLS_RSA_WITH_RC4_128_SHA`.
+Two facts rule out Go's `crypto/tls`:
+
+1. It rejects the `0x80` SSLv2 framing outright (as does modern OpenSSL 3.x) —
+   this is why the original project needed a patched Apache/OpenSSL.
+2. Even bridging that is not enough: the PS2 folds the **raw SSLv2 hello body**
+   into its handshake-transcript hash, whereas `crypto/tls` always hashes the
+   v3 `ClientHello` it parsed. The two transcripts differ, so the client's
+   `Finished` MAC never verifies. This was confirmed empirically — decrypting a
+   real captured `Finished` with the server private key yields
+   `verify_data = 8725f58a…`, which is reproduced *only* by hashing the v2 body,
+   not a canonical v3 reconstruction (see
+   [`capture_test.go`](capture_test.go)).
+
+So `dnasrep` implements just enough of TLS 1.0 itself ([`tls10.go`](tls10.go)):
+the SSLv2/v3 hello, RSA key exchange, the TLS 1.0 PRF and key expansion, 3DES-CBC
+records with HMAC-SHA1, and the Finished exchange — hashing the v2 body exactly
+as the console does. It handles a normal v3 `ClientHello` too, so ordinary TLS
+clients still work.
+
+**Verification.** Every primitive was checked three ways: the full handshake is
+driven end-to-end by a hand-written v2 client in
+[`tls10_test.go`](tls10_test.go); the transcript is proven bit-for-bit against
+the real PS2 capture in [`capture_test.go`](capture_test.go); and an independent
+`openssl s_client -tls1 -cipher DES-CBC3-SHA` completes the handshake and
+retrieves a document. The remaining unknown — as always without the exact target
+hardware — is title-to-title quirks, so **test against your console**.
+
+## Important caveats
+
+### Cipher / protocol scope
+Only TLS 1.0 with `TLS_RSA_WITH_3DES_EDE_CBC_SHA` (RSA key exchange) is
+implemented, because that is what the observed PS2 negotiates. If a specific
+title only offers something else (e.g. pure SSLv3, or RC4-only), the handshake
+will fail with a clear log line naming the missing cipher; open an issue with a
+capture and the suite can be added.
+
+### Certificate expiry
+The bundled certificates (`etc/dnas/cert-*.pem`) **expired in April 2026**. The
+server presents them unchanged; the PS2 historically checks neither expiry nor
+OCSP, so the trick keeps working. If you reissue them, keep the forged VeriSign
+CA chain (`ca-cert.pem`) so the PS2 still trusts them.
+
+### One region per listener
+The PS2's SSLv2-compatible hello carries **no SNI**, so each listener serves a
+single region's certificate (`-default-region`). To cover all three regions,
+give the host three IPs and run one instance per IP with the matching region,
+e.g.:
+
+```sh
+./dnasrep -https 192.168.2.10:443 -default-region jp -dns ""   &
+./dnasrep -https 192.168.2.20:443 -default-region eu -dns ""   &
+./dnasrep -https 192.168.2.30:443 -default-region us -dns :53 -redirect-ip … &
+```
+
+(Run the DNS redirector on just one of them.)
+
+## Tests
+
+```sh
+go test ./...
+```
+
+The suite covers all the load-bearing pieces:
+
+- `TestEncrypt3nMatchesManual` – the compact 3DES-CBC `encrypt3n` is bit-for-bit
+  identical to a faithful port of the original PHP loop.
+- `TestFullV2Handshake` – a hand-written SSLv2 client completes a full handshake
+  (RSA kex, 3DES-CBC records, Finished both ways) and fetches a DNAS reply.
+- `TestCaptureTranscriptMatchesRealPS2` – the transcript hashing reproduces a
+  real console's `Finished` (skipped if the reference certs are absent).
