@@ -14,6 +14,13 @@ type Server struct {
 	// defaultRegion selects the certificate to present. PS2 clients send no SNI,
 	// so a single region is served per listener (see README for multi-IP setups).
 	defaultRegion string
+
+	// ForceSuccess selects how the gateway's success.raw is used: not at all
+	// (successOff), only for titles without a captured packet (successFallback),
+	// or for every replay request (successAlways). An experimental workaround
+	// for titles that were never captured for the DNASforever project; see
+	// README ("Force-success workaround").
+	ForceSuccess successMode
 }
 
 // clientIP strips the port from a "host:port" address, returning just the host.

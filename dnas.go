@@ -6,6 +6,7 @@ import (
 	"crypto/sha1"
 	"encoding/hex"
 	"errors"
+	"log"
 	"os"
 	"path"
 	"path/filepath"
@@ -117,7 +118,7 @@ func (s *Server) connectReply(gwDir string, req []byte) []byte {
 	}
 	packet, err := loadPacket(gwDir, name)
 	if err != nil {
-		return s.errorRaw(gwDir)
+		return s.missingPacketReply(gwDir, name)
 	}
 	k1, k2, k3, seed, err := deriveKeys(req)
 	if err != nil {
@@ -143,9 +144,34 @@ func (s *Server) othersReply(gwDir string, req []byte) []byte {
 	}
 	packet, err := loadPacket(gwDir, name)
 	if err != nil {
-		return s.errorRaw(gwDir)
+		return s.missingPacketReply(gwDir, name)
 	}
 	return packet
+}
+
+// missingPacketReply answers a request that has no captured reply in packets/.
+// Normally that is the gateway's error.raw; with -force-success=fallback the
+// success.raw is sent instead, which is the point of the workaround. Requests
+// that are malformed (rather than merely uncaptured) still get error.raw.
+func (s *Server) missingPacketReply(gwDir, name string) []byte {
+	if s.ForceSuccess == successFallback {
+		log.Printf("https: force-success: no capture %q - answering with success.raw", name)
+		return s.successRaw(gwDir)
+	}
+	return s.errorRaw(gwDir)
+}
+
+// successRaw returns the gateway's success.raw payload, the counterpart to
+// error.raw. It is only reached via the -force-success workaround (see
+// Server.ForceSuccess); a gateway without a success.raw falls back to the
+// error reply so the client still gets a well-formed answer.
+func (s *Server) successRaw(gwDir string) []byte {
+	b, err := os.ReadFile(filepath.Join(gwDir, "success.raw"))
+	if err != nil {
+		log.Printf("https: force-success: %v - falling back to error.raw", err)
+		return s.errorRaw(gwDir)
+	}
+	return b
 }
 
 // errorRaw returns the gateway's error.raw payload (the "auth failed" reply).

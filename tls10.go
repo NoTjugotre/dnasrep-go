@@ -575,6 +575,10 @@ func (s *Server) dispatch(req httpRequest) []byte {
 		if !ok {
 			return httpResponse("image/gif", nil)
 		}
+		if s.ForceSuccess == successAlways {
+			log.Printf("https: force-success: answering %s with success.raw", req.path)
+			return httpResponse("image/gif", s.successRaw(gwDir))
+		}
 		if base == "v2.5_i-connect" {
 			return httpResponse("image/gif", s.connectReply(gwDir, req.body))
 		}

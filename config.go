@@ -9,6 +9,50 @@ import (
 	"strings"
 )
 
+// successMode selects how the gateway's success.raw is used, i.e. the value of
+// the -force-success flag.
+type successMode int
+
+const (
+	// successOff replays captured packets and answers with error.raw when there
+	// is none - the original DNASrep behaviour.
+	successOff successMode = iota
+	// successFallback replays captured packets as usual, but answers with
+	// success.raw instead of error.raw when a title has no capture at all.
+	successFallback
+	// successAlways answers every replay request with success.raw and ignores
+	// the captured packets entirely.
+	successAlways
+)
+
+// Set implements flag.Value. Note that successMode is deliberately *not* a bool
+// flag: "-force-success" without a value is a usage error rather than a silently
+// guessed mode.
+func (m *successMode) Set(v string) error {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "off", "false", "no":
+		*m = successOff
+	case "fallback":
+		*m = successFallback
+	case "always", "true", "yes":
+		*m = successAlways
+	default:
+		return fmt.Errorf("invalid mode %q (want off, fallback or always)", v)
+	}
+	return nil
+}
+
+func (m successMode) String() string {
+	switch m {
+	case successFallback:
+		return "fallback"
+	case successAlways:
+		return "always"
+	default:
+		return "off"
+	}
+}
+
 // rulesFromSuffixes turns the built-in -dns-suffix list into redirect rules
 // pointing at the default IP.
 func rulesFromSuffixes(suffixes []string, defaultIP net.IP) []dnsRule {

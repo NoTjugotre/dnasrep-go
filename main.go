@@ -43,6 +43,8 @@ func main() {
 	)
 	var httpsAddrs stringList
 	flag.Var(&httpsAddrs, "https", "TLS listen address(es), comma-separated or repeated (default :443)")
+	var forceSucc successMode
+	flag.Var(&forceSucc, "force-success", "use the gateway's success.raw: \"fallback\" for titles without a captured packet, \"always\" for every request (default \"off\")")
 	var suffixes stringList
 	flag.Var(&suffixes, "dns-suffix", "domain suffix(es) to redirect (default dnas.playstation.org)")
 	flag.Parse()
@@ -58,6 +60,15 @@ func main() {
 		DocRoot:       *docroot,
 		defaultRegion: *defRegion,
 		certs:         map[string]*tls.Certificate{},
+		ForceSuccess:  forceSucc,
+	}
+	switch srv.ForceSuccess {
+	case successFallback:
+		log.Printf("force-success=fallback: titles without a captured packet are " +
+			"answered with the gateway's success.raw instead of error.raw")
+	case successAlways:
+		log.Printf("force-success=always: every v2.5_i-connect/v2.5_others request " +
+			"is answered with the gateway's success.raw, captured packets are ignored")
 	}
 	for _, region := range []string{"jp", "eu", "us"} {
 		certPath := filepath.Join(*certdir, "cert-"+region+".pem")

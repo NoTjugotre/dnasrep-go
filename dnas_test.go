@@ -107,6 +107,120 @@ func TestPacketName(t *testing.T) {
 	}
 }
 
+// forceSuccessDocRoot builds a throwaway docroot with one gateway directory
+// holding a captured packet, error.raw and (optionally) success.raw.
+func forceSuccessDocRoot(t *testing.T, withSuccess bool) string {
+	t.Helper()
+	root := t.TempDir()
+	gw := root + "/us-gw"
+	if err := os.MkdirAll(gw+"/packets", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write := func(name string, data []byte) {
+		if err := os.WriteFile(gw+"/"+name, data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("packets/0044d711bb7bfb3a_01180000", []byte("CAPTURED"))
+	write("error.raw", []byte("ERROR"))
+	if withSuccess {
+		write("success.raw", []byte("SUCCESS"))
+	}
+	return root
+}
+
+// othersRequest is a minimal v2.5_others query for game 0044d711bb7bfb3a.
+func othersRequest() httpRequest {
+	body := make([]byte, 0x40)
+	copy(body[0:4], []byte{0x01, 0x18, 0x00, 0x00})
+	copy(body[0x1b:0x1b+8], []byte{0x00, 0x44, 0xd7, 0x11, 0xbb, 0x7b, 0xfb, 0x3a})
+	return httpRequest{method: "POST", path: "/us-gw/v2.5_others", body: body}
+}
+
+// unknownRequest is othersRequest() for a game ID that has no capture.
+func unknownRequest() httpRequest {
+	req := othersRequest()
+	copy(req.body[0x1b:0x1b+8], []byte{0xde, 0xad, 0xbe, 0xef, 0xde, 0xad, 0xbe, 0xef})
+	return req
+}
+
+func TestForceSuccessModes(t *testing.T) {
+	root := forceSuccessDocRoot(t, true)
+	connect := func(r httpRequest) httpRequest {
+		r.path = "/us-gw/v2.5_i-connect"
+		return r
+	}
+
+	cases := []struct {
+		name string
+		mode successMode
+		req  httpRequest
+		want string
+	}{
+		// off - the original behaviour, success.raw is never touched.
+		{"off/captured", successOff, othersRequest(), "CAPTURED"},
+		{"off/uncaptured", successOff, unknownRequest(), "ERROR"},
+
+		// fallback - captured titles keep their real replies, only the
+		// error.raw case is replaced.
+		{"fallback/captured", successFallback, othersRequest(), "CAPTURED"},
+		{"fallback/uncaptured", successFallback, unknownRequest(), "SUCCESS"},
+		{"fallback/uncaptured i-connect", successFallback, connect(unknownRequest()), "SUCCESS"},
+
+		// always - success.raw wins even where a capture exists.
+		{"always/captured", successAlways, othersRequest(), "SUCCESS"},
+		{"always/uncaptured", successAlways, unknownRequest(), "SUCCESS"},
+		{"always/i-connect", successAlways, connect(othersRequest()), "SUCCESS"},
+	}
+	for _, tc := range cases {
+		s := &Server{DocRoot: root, ForceSuccess: tc.mode}
+		if got := s.dispatch(tc.req); !bytes.HasSuffix(got, []byte(tc.want)) {
+			t.Errorf("%s: got %q, want %s", tc.name, got, tc.want)
+		}
+	}
+}
+
+// A malformed (too short) body is not an uncaptured title, so it keeps getting
+// error.raw even in fallback mode.
+func TestForceSuccessFallbackKeepsErrorForMalformed(t *testing.T) {
+	req := othersRequest()
+	req.body = req.body[:4]
+	s := &Server{DocRoot: forceSuccessDocRoot(t, true), ForceSuccess: successFallback}
+	if got := s.dispatch(req); !bytes.HasSuffix(got, []byte("ERROR")) {
+		t.Fatalf("malformed body: got %q, want error.raw", got)
+	}
+}
+
+func TestForceSuccessFallsBackToError(t *testing.T) {
+	for _, mode := range []successMode{successFallback, successAlways} {
+		s := &Server{DocRoot: forceSuccessDocRoot(t, false), ForceSuccess: mode}
+		if got := s.dispatch(unknownRequest()); !bytes.HasSuffix(got, []byte("ERROR")) {
+			t.Errorf("%s without success.raw: got %q, want error.raw", mode, got)
+		}
+	}
+}
+
+func TestSuccessModeSet(t *testing.T) {
+	valid := map[string]successMode{
+		"off": successOff, "false": successOff,
+		"fallback": successFallback,
+		"always":   successAlways, "true": successAlways,
+		"ALWAYS": successAlways, " fallback ": successFallback,
+	}
+	for in, want := range valid {
+		var m successMode
+		if err := m.Set(in); err != nil || m != want {
+			t.Errorf("Set(%q) = %v, err=%v; want %v", in, m, err, want)
+		}
+	}
+	for _, in := range []string{"", "yes please", "success"} {
+		var m successMode
+		if err := m.Set(in); err == nil {
+			t.Errorf("Set(%q) accepted, want an error", in)
+		}
+	}
+}
+
 func TestDNSRoundTrip(t *testing.T) {
 	// Build a minimal query for gate1.us.dnas.playstation.org type A.
 	q := buildQuery("gate1.us.dnas.playstation.org", 1)

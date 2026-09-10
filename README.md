@@ -57,6 +57,7 @@ sudo ./dnasrep \
 | `-dns-suffix` | `dnas.playstation.org` | domain suffix(es) to redirect |
 | `-dns-config` | `dns.config` | extra redirect rules file (see below) |
 | `-default-region` | `jp` | certificate region used when the client sends no SNI |
+| `-force-success` | `off` | use the gateway's `success.raw`: `fallback` or `always` (experimental, see below) |
 
 On the PS2, set this machine as the **primary DNS**; the redirector handles the rest.
 
@@ -77,6 +78,46 @@ match wins, and rules in the file override the `-dns-suffix` defaults for the
 same name. Names with no matching rule are forwarded to `-upstream`. A missing
 `dns.config` is fine (the built-in DNAS defaults still apply); a file explicitly
 passed with `-dns-config` that is missing or malformed is a startup error.
+
+## Force-success workaround (experimental)
+
+Every gateway directory holds an `error.raw` — the "auth failed" reply that is
+sent whenever a request has no matching capture in `packets/`. Titles that were
+never captured for the DNASforever project therefore always get an error, even
+though a generic "success" answer might be all they need. `success.raw` is the
+counterpart: it lives next to `error.raw`, one per gateway
+(`gate/us-gw/success.raw`, `gate/eu-gw/success.raw`, `gate/gai-gw/success.raw`).
+
+`-force-success` decides when it is used:
+
+| Mode | Behaviour |
+| --- | --- |
+| `off` (default) | captured packets are replayed, uncaptured titles get `error.raw` — original DNASrep behaviour |
+| `fallback` | captured packets are replayed **unchanged**; only the `error.raw` case is replaced by `success.raw` |
+| `always` | *every* request is answered with `success.raw`, captured packets are ignored entirely |
+
+```sh
+./dnasrep -force-success=fallback     # the workaround proper
+./dnasrep -force-success=always       # blunt test mode
+```
+
+Both modes cover both replay endpoints (`v2.5_i-connect` and `v2.5_others`), and
+`success.raw` is sent verbatim — no 3DES envelope is applied, exactly as with
+`error.raw`. If a gateway has no `success.raw`, the request falls back to
+`error.raw` and a warning is logged. Overridden requests are logged as
+`https: force-success: no capture "<id>_<qrytype>" - answering with success.raw`
+(`fallback`) or `https: force-success: answering <path> with success.raw`
+(`always`).
+
+`fallback` is the mode meant for actual use: it only affects titles that would
+have failed anyway. `always` exists to check whether *already emulated* titles
+still work when they get the generic reply instead of their real capture — that
+answers whether `fallback` can safely become the default, but it is not a mode
+to run a working setup on. Note that `-force-success` needs an explicit value;
+bare `-force-success` is a usage error rather than a guessed mode.
+
+Whether a console accepts the generic reply is title-dependent — **please report
+results.**
 
 ## Logging
 
