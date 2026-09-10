@@ -1,2 +1,8 @@
 /dnasrep
 *.log
+
+# macOS directory metadata
+.DS_Store
+
+# local DNS redirect rules (see dns.config.example)
+/dns.config
