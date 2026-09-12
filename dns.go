@@ -22,6 +22,9 @@ type dnsRule struct {
 type DNSServer struct {
 	Rules    []dnsRule // sorted most-specific (longest suffix) first
 	Upstream string    // host:port of a normal resolver, e.g. 1.1.1.1:53
+	// Hints records which DNAS region each client resolved last, so the TLS
+	// side can present the matching certificate. Optional.
+	Hints *regionHints
 }
 
 func (d *DNSServer) listen(addr string) error {
@@ -52,7 +55,12 @@ func (d *DNSServer) handle(pc net.PacketConn, src net.Addr, query []byte) {
 		if ip := d.lookup(name); ip != nil {
 			if resp, err := buildAResponse(query, ip); err == nil {
 				pc.WriteTo(resp, src)
-				log.Printf("dns: %s -> %s (redirected)", name, ip)
+				note := ""
+				if region, ok := regionFromName(name); ok && d.Hints != nil {
+					d.Hints.set(clientIP(src.String()), region)
+					note = ", " + region + " region noted for " + clientIP(src.String())
+				}
+				log.Printf("dns: %s -> %s (redirected%s)", name, ip, note)
 				return
 			}
 		}

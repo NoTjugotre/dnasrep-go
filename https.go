@@ -14,9 +14,12 @@ type Server struct {
 
 	// certs maps a region key ("jp","eu","us") to a loaded certificate.
 	certs map[string]*tls.Certificate
-	// defaultRegion selects the certificate to present. PS2 clients send no SNI,
-	// so a single region is served per listener (see README for multi-IP setups).
+	// defaultRegion selects the certificate to present when Hints has nothing
+	// for the client. PS2 clients send no SNI; see regionHints for how the
+	// region is guessed and the README for multi-IP setups.
 	defaultRegion string
+	// Hints is shared with the DNS redirector; nil when DNS is disabled.
+	Hints *regionHints
 
 	// ForceSuccess selects how the gateway's success.raw is used: not at all
 	// (successOff), only for titles without a captured packet (successFallback),

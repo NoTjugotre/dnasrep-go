@@ -63,6 +63,11 @@ func main() {
 		certs:         map[string]*tls.Certificate{},
 		ForceSuccess:  forceSucc,
 	}
+	// When we are also the console's DNS, the gate1.<region> lookup that
+	// precedes every DNAS connection tells us which certificate to present.
+	if *dnsAddr != "" {
+		srv.Hints = newRegionHints()
+	}
 	switch srv.ForceSuccess {
 	case successFallback:
 		log.Printf("force-success=fallback: titles without a captured packet are " +
@@ -130,7 +135,7 @@ func main() {
 		rules = dedupeRules(rules)
 
 		sortRulesLongestFirst(rules)
-		dns := &DNSServer{Rules: rules, Upstream: *upstream}
+		dns := &DNSServer{Rules: rules, Upstream: *upstream, Hints: srv.Hints}
 		go func() {
 			if err := dns.listen(*dnsAddr); err != nil {
 				log.Fatalf("dns: %v", err)

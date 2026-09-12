@@ -234,13 +234,15 @@ func (s *Server) serveTLS10(raw net.Conn) {
 }
 
 func (s *Server) handshakeAndServe(c *tls10Conn) error {
-	cert := s.certs[s.defaultRegion]
+	ip := clientIP(c.conn.RemoteAddr().String())
+	cert, certSource := s.certFor(ip)
 	priv, ok := cert.PrivateKey.(*rsa.PrivateKey)
 	if !ok {
 		return errors.New("tls: server key is not RSA")
 	}
+	c.certInfo = "presented " + certSource
 	if cert.Leaf != nil {
-		c.certInfo = fmt.Sprintf("presented CN=%s, %s, valid %s..%s", cert.Leaf.Subject.CommonName,
+		c.certInfo = fmt.Sprintf("presented %s: CN=%s, %s, valid %s..%s", certSource, cert.Leaf.Subject.CommonName,
 			cert.Leaf.SignatureAlgorithm, cert.Leaf.NotBefore.Format("2006-01-02"), cert.Leaf.NotAfter.Format("2006-01-02"))
 	}
 
@@ -250,7 +252,7 @@ func (s *Server) handshakeAndServe(c *tls10Conn) error {
 	if err != nil {
 		return fmt.Errorf("read ClientHello: %w", err)
 	}
-	log.Printf("tls: %s %s", clientIP(c.conn.RemoteAddr().String()), c.helloInfo)
+	log.Printf("tls: %s %s; using %s", ip, c.helloInfo, certSource)
 
 	// 2) ServerHello with a fresh random.
 	serverRandom := make([]byte, 32)

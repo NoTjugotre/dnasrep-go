@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"crypto/des"
 	"crypto/rand"
+	"crypto/tls"
 	"encoding/binary"
 	"net"
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -325,4 +327,81 @@ func bytesSplit(name string) [][]byte {
 		out = append(out, cur)
 	}
 	return out
+}
+
+func TestRegionFromName(t *testing.T) {
+	cases := map[string]string{
+		"gate1.us.dnas.playstation.org":      "us",
+		"GATE1.EU.dnas.playstation.org.":     "eu",
+		"bbn01.jp.dnas.playstation.org":      "jp",
+		"dnns-p01.jp.dnas.playstation.org":   "jp",
+		"jp.dnas.playstation.org":            "jp",
+		"dnas.playstation.org":               "",
+		"www01.kddi-mmbb.jp":                 "",
+		"gate1.us.dnas.playstation.org.evil": "",
+	}
+	for name, want := range cases {
+		got, ok := regionFromName(name)
+		if ok != (want != "") || got != want {
+			t.Errorf("regionFromName(%q) = %q,%v; want %q", name, got, ok, want)
+		}
+	}
+}
+
+// fakePacketConn records what handle() writes back.
+type fakePacketConn struct {
+	net.PacketConn
+	written [][]byte
+}
+
+func (f *fakePacketConn) WriteTo(b []byte, _ net.Addr) (int, error) {
+	f.written = append(f.written, append([]byte(nil), b...))
+	return len(b), nil
+}
+
+func TestDNSLookupSelectsCertificate(t *testing.T) {
+	hints := newRegionHints()
+	jp, eu, us := &tls.Certificate{}, &tls.Certificate{}, &tls.Certificate{}
+	srv := &Server{defaultRegion: "jp", Hints: hints,
+		certs: map[string]*tls.Certificate{"jp": jp, "eu": eu, "us": us}}
+
+	// No lookup seen yet: default region.
+	if cert, why := srv.certFor("192.168.2.55"); cert != jp || !strings.Contains(why, "default") {
+		t.Fatalf("before lookup: got %q", why)
+	}
+
+	// The console resolves the EU gateway ...
+	d := &DNSServer{Rules: []dnsRule{{suffix: "dnas.playstation.org", ip: net.IPv4(10, 0, 0, 1)}}, Hints: hints}
+	pc := &fakePacketConn{}
+	src := &net.UDPAddr{IP: net.IPv4(192, 168, 2, 55), Port: 4711}
+	d.handle(pc, src, buildQuery("gate1.eu.dnas.playstation.org", 1))
+	if len(pc.written) != 1 {
+		t.Fatalf("expected one DNS answer, got %d", len(pc.written))
+	}
+
+	// ... and the following TLS connection from that IP gets the EU cert.
+	if cert, why := srv.certFor("192.168.2.55"); cert != eu || !strings.Contains(why, "eu certificate") {
+		t.Fatalf("after EU lookup: got %q", why)
+	}
+	// Other clients are unaffected.
+	if cert, _ := srv.certFor("192.168.2.56"); cert != jp {
+		t.Fatal("unrelated client should get the default")
+	}
+	// A later US lookup from the same console switches the cert.
+	d.handle(pc, src, buildQuery("gate1.us.dnas.playstation.org", 1))
+	if cert, _ := srv.certFor("192.168.2.55"); cert != us {
+		t.Fatal("after US lookup: want the US cert")
+	}
+	// A region we have no certificate for falls back to the default.
+	d.handle(pc, src, buildQuery("gate1.kr.dnas.playstation.org", 1))
+	if cert, why := srv.certFor("192.168.2.55"); cert != jp || !strings.Contains(why, "kr") {
+		t.Fatalf("unknown region: got %q", why)
+	}
+	// Non-DNAS redirects leave the hint alone.
+	d.Rules = append(d.Rules, dnsRule{suffix: "www01.kddi-mmbb.jp", ip: net.IPv4(10, 0, 0, 2)})
+	d.handle(pc, src, buildQuery("gate1.eu.dnas.playstation.org", 1))
+	d.handle(pc, src, buildQuery("www01.kddi-mmbb.jp", 1))
+	if cert, _ := srv.certFor("192.168.2.55"); cert != eu {
+		t.Fatal("KDDI lookup must not change the region hint")
+	}
 }

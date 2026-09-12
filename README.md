@@ -56,7 +56,7 @@ sudo ./dnasrep \
 | `-redirect-ip` | auto | IP the DNAS names resolve to (default: detected outbound IP) |
 | `-dns-suffix` | `dnas.playstation.org` | domain suffix(es) to redirect |
 | `-dns-config` | `dns.config` | extra redirect rules file (see below) |
-| `-default-region` | `jp` | certificate region used when the client sends no SNI |
+| `-default-region` | `jp` | certificate region used when no DNS lookup revealed the client's region (see below) |
 | `-force-success` | `off` | use the gateway's `success.raw`: `fallback` or `always` (experimental, see below) |
 
 On the PS2, set this machine as the **primary DNS**; the redirector handles the rest.
@@ -214,11 +214,27 @@ files are shared, copy them in first). To re-issue again, run
 `go run ./tools/gencerts -certdir ./certs`; `certs/ca-key.pem` is the (fake)
 CA's key and is versioned on purpose so the issuer stays stable.
 
-### One region per listener
-The PS2's SSLv2-compatible hello carries **no SNI**, so each listener serves a
-single region's certificate (`-default-region`). To cover all three regions,
-give the host three IPs and run one instance per IP with the matching region,
-e.g.:
+### Certificate region selection
+The PS2's SSLv2-compatible hello carries **no SNI**, so the server cannot tell
+from the TLS connection itself whether a title expects the JP, EU or US
+certificate — and titles that check the certificate's CN against the hostname
+reject the wrong region with a `certificate_unknown` alert.
+
+What the console does reveal is the DNS lookup: right before connecting it
+resolves `gate1.<region>.dnas.playstation.org` (or `ts01.`, `bbn01.`, …).
+When `dnasrep` is the console's DNS server, the redirector notes the region
+per client IP (`dns: gate1.eu.dnas.playstation.org -> 192.168.2.10 (redirected,
+eu region noted for 192.168.2.55)`) and the next TLS connection from that IP
+gets the matching certificate (`tls: 192.168.2.55 ClientHello: …; using eu
+certificate (DNS lookup 1s ago)`). Each new lookup overrides the previous
+one, so switching titles just works. Requires the console to query this server
+directly; if a router or forwarder sits in between, the DNS source IP is not
+the console's and the hint does not match.
+
+Without a usable hint — DNS disabled (`-dns ""`), DNS served elsewhere, or no
+certificate for the resolved region — `-default-region` is used. The
+multi-IP setup still works as a fallback: give the host three IPs and run one
+instance per IP with the matching region, e.g.:
 
 ```sh
 ./dnasrep -https 192.168.2.10:443 -default-region jp -dns ""   &
