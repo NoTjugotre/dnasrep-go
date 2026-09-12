@@ -212,8 +212,8 @@ actually verify:
 - A CA self-signature with a standard OID instead of the OIW `shaWithRSA`.
 
 Titles that never verified the certificate are unaffected. To go back to the
-originals for comparison, run with `-certdir certs/original-2016` (the key
-files are shared, copy them in first). To re-issue again, run
+originals for comparison, run with `-certdir certs/original-2016` (a complete
+set, keys included). To re-issue again, run
 `go run ./tools/gencerts -certdir ./certs`; `certs/ca-key.pem` is the (fake)
 CA's key and is versioned on purpose so the issuer stays stable.
 
