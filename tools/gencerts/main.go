@@ -1,5 +1,10 @@
 // Command gencerts (re)issues the DNAS gateway certificates.
 //
+// WARNING: the set it produced in September 2026 (certs/reissued-2026) is
+// rejected by titles that accept the 2016 originals in certs/. Whatever the
+// console checks, the originals satisfy it and these do not - so this tool is
+// kept as a starting point for experiments, not as the way to refresh certs/.
+//
 // The PS2's DNAS library embeds an OpenSSL of the 0.9.6/0.9.7 era, so the
 // certificates are deliberately old-fashioned: RSA-1024, SHA-1 signatures
 // (those OpenSSL versions know neither SHA-256 nor anything newer), a validity

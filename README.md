@@ -196,26 +196,16 @@ library verifies the chain need this; titles that don't ignore the extra
 certificate. A missing `ca-cert.pem` only logs a warning at startup, but expect
 `unknown_ca`/`bad_certificate` alerts from stricter titles without it.
 
-The bundled certificates were **re-issued in September 2026** with
-[`tools/gencerts`](tools/gencerts/main.go), keeping the original subjects and
-the per-region leaf keys but fixing three things the 2016 originals (kept in
-[`certs/original-2016/`](certs/original-2016)) got wrong for titles that
-actually verify:
-
-- **SHA-1 signatures instead of SHA-256.** The PS2's DNAS library embeds an
-  OpenSSL of the 0.9.6/0.9.7 era (its SSLv2 hello carries that version's
-  default cipher list verbatim), which does not know SHA-256. A verifying title
-  could not even start checking the old leaf's signature.
-- **Valid 2000-01-01 .. 2037-12-31** instead of expired since April 2026 — the
-  window starts early enough for a console whose clock was never set and ends
-  before the 32-bit `time_t` rollover.
-- A CA self-signature with a standard OID instead of the OIW `shaWithRSA`.
-
-Titles that never verified the certificate are unaffected. To go back to the
-originals for comparison, run with `-certdir certs/original-2016` (a complete
-set, keys included). To re-issue again, run
-`go run ./tools/gencerts -certdir ./certs`; `certs/ca-key.pem` is the (fake)
-CA's key and is versioned on purpose so the issuer stays stable.
+The bundled certificates are the **2016 originals** from DNASrep: X.509 v1
+leaves signed `sha256WithRSA` by a forged VeriSign "Class 3 Public Primary CA",
+all expired since April 2026. They work — the PS2 accepts them as-is, and that
+turned out to be non-negotiable: a re-issued set with SHA-1 signatures, v3
+extensions and fresh validity dates (kept in
+[`certs/reissued-2026/`](certs/reissued-2026), produced with
+[`tools/gencerts`](tools/gencerts/main.go)) was **rejected by titles that
+accept the originals**, so whatever the console checks is satisfied by the
+originals specifically. Do not swap them out; the re-issued set stays only as
+a data point (`-certdir certs/reissued-2026`, keys are the same).
 
 ### Certificate region selection
 The PS2's SSLv2-compatible hello carries **no SNI**, so the server cannot tell
