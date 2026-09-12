@@ -45,8 +45,12 @@ func (h *regionHints) get(ip string) (regionHint, bool) {
 // <region>.dnas.playstation.org counts (ts01, dnns-p01, bbn01, ...).
 func regionFromName(name string) (string, bool) {
 	name = strings.ToLower(strings.TrimSuffix(name, "."))
-	rest, ok := strings.CutSuffix(name, ".dnas.playstation.org")
-	if !ok || rest == "" {
+	const suffix = ".dnas.playstation.org"
+	if !strings.HasSuffix(name, suffix) {
+		return "", false
+	}
+	rest := strings.TrimSuffix(name, suffix)
+	if rest == "" {
 		return "", false
 	}
 	region := rest[strings.LastIndexByte(rest, '.')+1:]

@@ -26,6 +26,9 @@ Only the standard library is used (`crypto/des`, `crypto/rsa`, `crypto/md5`,
 
 ## Building
 
+Go 1.19 or newer (the code sticks to that API level on purpose, so it builds
+on older distribution toolchains):
+
 ```sh
 cd dnasrep-go
 go build -o dnasrep .
