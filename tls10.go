@@ -12,6 +12,7 @@ import (
 	"crypto/sha1"
 	"crypto/subtle"
 	"encoding/binary"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"hash"
@@ -109,6 +110,8 @@ type tls10Conn struct {
 
 	transcript []byte // concatenated handshake messages (bodies, no record headers)
 	helloInfo  string // one-line summary of the ClientHello, for logs
+	helloSpecs string // the offered cipher specs/suites as hex, for logs
+	certInfo   string // CN and validity of the certificate we presented
 
 	readActive, writeActive bool
 	readSeq, writeSeq       uint64
@@ -236,6 +239,10 @@ func (s *Server) handshakeAndServe(c *tls10Conn) error {
 	if !ok {
 		return errors.New("tls: server key is not RSA")
 	}
+	if cert.Leaf != nil {
+		c.certInfo = fmt.Sprintf("presented CN=%s, %s, valid %s..%s", cert.Leaf.Subject.CommonName,
+			cert.Leaf.SignatureAlgorithm, cert.Leaf.NotBefore.Format("2006-01-02"), cert.Leaf.NotAfter.Format("2006-01-02"))
+	}
 
 	// 1) ClientHello (SSLv2-compatible or v3). clientRandom is what both sides
 	//    feed into key derivation; chMsg is what goes into the transcript.
@@ -358,6 +365,7 @@ func (c *tls10Conn) readClientHello() ([]byte, error) {
 		}
 		c.helloInfo = fmt.Sprintf("ClientHello: SSLv2-compat, version %d.%d, %d cipher specs, %d-byte challenge",
 			body[1], body[2], csl/3, cl)
+		c.helloSpecs = hex.EncodeToString(body[9 : 9+csl])
 		if !offersCipher(body[9:9+csl], true) {
 			return nil, fmt.Errorf("tls: client does not offer TLS_RSA_WITH_3DES_EDE_CBC_SHA (%s)", c.helloInfo)
 		}
@@ -399,6 +407,7 @@ func (c *tls10Conn) readClientHello() ([]byte, error) {
 	}
 	c.helloInfo = fmt.Sprintf("ClientHello: v3, version %d.%d, %d cipher suites, %d-byte session id",
 		p[0], p[1], csLen/2, sidLen)
+	c.helloSpecs = hex.EncodeToString(p[off : off+csLen])
 	if !offersCipher(p[off:off+csLen], false) {
 		return nil, fmt.Errorf("tls: client does not offer TLS_RSA_WITH_3DES_EDE_CBC_SHA (%s)", c.helloInfo)
 	}
@@ -408,8 +417,11 @@ func (c *tls10Conn) readClientHello() ([]byte, error) {
 // unexpected builds the error for a record that is not the handshake message
 // we were waiting for. Alerts are decoded, because that is where a title tells
 // us *why* it gave up (unknown_ca, certificate_expired, protocol_version, ...).
+// The cipher list fingerprints the client's TLS stack and the certificate line
+// shows what a rejecting title actually looked at (region, algorithm, dates).
 func (c *tls10Conn) unexpected(want string, typ byte, body []byte) error {
-	return fmt.Errorf("tls: expected %s, got %s (%s)", want, describeRecord(typ, body), c.helloInfo)
+	return fmt.Errorf("tls: expected %s, got %s (%s; specs %s; %s)",
+		want, describeRecord(typ, body), c.helloInfo, c.helloSpecs, c.certInfo)
 }
 
 // alertNames maps TLS 1.0 / SSL 3.0 alert descriptions to their names.

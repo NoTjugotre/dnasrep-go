@@ -11,6 +11,7 @@ package main
 
 import (
 	"crypto/tls"
+	"crypto/x509"
 	"flag"
 	"log"
 	"net"
@@ -85,8 +86,14 @@ func main() {
 			continue
 		}
 		appendChain(&cert, chain)
+		if cert.Leaf, err = x509.ParseCertificate(cert.Certificate[0]); err != nil {
+			log.Printf("warning: could not parse %s certificate: %v", region, err)
+			continue
+		}
 		srv.certs[region] = &cert
-		log.Printf("loaded %s certificate (%d-cert chain)", region, len(cert.Certificate))
+		log.Printf("loaded %s certificate: CN=%s, %s, valid until %s (%d-cert chain)",
+			region, cert.Leaf.Subject.CommonName, cert.Leaf.SignatureAlgorithm,
+			cert.Leaf.NotAfter.Format("2006-01-02"), len(cert.Certificate))
 	}
 	if len(srv.certs) == 0 {
 		log.Fatalf("no certificates loaded from %s", *certdir)

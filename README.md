@@ -129,12 +129,14 @@ Every client that reaches the server is logged:
 - **Handshake level** – each ClientHello is summarised
   (`tls: <ip> ClientHello: SSLv2-compat, version 3.1, 25 cipher specs, 16-byte challenge`),
   and a handshake that dies is logged with what the client sent instead of the
-  expected message, alerts decoded:
-  `tls: <ip> handshake/serve: tls: expected ClientKeyExchange, got fatal alert 48 (unknown_ca) (ClientHello: …)`.
+  expected message, alerts decoded, plus the offered cipher list (a fingerprint
+  of the title's TLS stack) and the certificate we presented:
+  `tls: <ip> handshake/serve: tls: expected ClientKeyExchange, got fatal alert 46 (certificate_unknown) (ClientHello: …; specs 000066…; presented CN=gate1.jp.dnas.playstation.org, SHA1-RSA, valid 2000-01-01..2037-12-31)`.
   The alert description is the console telling you *why* it gave up
   (`unknown_ca`/`bad_certificate` → chain or CA problem, `certificate_expired`
-  → see [Certificate expiry](#certificate-expiry), `protocol_version` → the
-  title wants a TLS version this server does not speak).
+  or `certificate_unknown` → see [Certificates](#certificates), and check that
+  the presented CN matches the title's region, `protocol_version` → the title
+  wants a TLS version this server does not speak).
 - **Request level** – each decrypted HTTP request is logged with client IP,
   method, path, and body size
   (`https: <ip> POST /us-gw/v2.5_others (35-byte body)`).
@@ -183,7 +185,7 @@ title only offers something else (e.g. pure SSLv3, or RC4-only), the handshake
 will fail with a clear log line naming the missing cipher; open an issue with a
 capture and the suite can be added.
 
-### Certificate chain
+### Certificates
 The server sends the leaf certificate followed by `ca-cert.pem` (the forged
 VeriSign "Class 3 Public Primary CA" that signed the leaves), exactly as the
 original Apache setup did via `SSLCertificateChainFile`. Titles whose DNAS
@@ -191,13 +193,26 @@ library verifies the chain need this; titles that don't ignore the extra
 certificate. A missing `ca-cert.pem` only logs a warning at startup, but expect
 `unknown_ca`/`bad_certificate` alerts from stricter titles without it.
 
-### Certificate expiry
-The bundled certificates (`etc/dnas/cert-*.pem`, `ca-cert.pem`) **expired in
-April 2026**. The server presents them unchanged; the PS2 historically checks
-neither expiry nor OCSP, so the trick keeps working — a title that does check
-will abort with a `certificate_expired` alert (see [Logging](#logging)). If you
-reissue them, keep the forged VeriSign CA chain (`ca-cert.pem`) so the PS2
-still trusts them.
+The bundled certificates were **re-issued in September 2026** with
+[`tools/gencerts`](tools/gencerts/main.go), keeping the original subjects and
+the per-region leaf keys but fixing three things the 2016 originals (kept in
+[`certs/original-2016/`](certs/original-2016)) got wrong for titles that
+actually verify:
+
+- **SHA-1 signatures instead of SHA-256.** The PS2's DNAS library embeds an
+  OpenSSL of the 0.9.6/0.9.7 era (its SSLv2 hello carries that version's
+  default cipher list verbatim), which does not know SHA-256. A verifying title
+  could not even start checking the old leaf's signature.
+- **Valid 2000-01-01 .. 2037-12-31** instead of expired since April 2026 — the
+  window starts early enough for a console whose clock was never set and ends
+  before the 32-bit `time_t` rollover.
+- A CA self-signature with a standard OID instead of the OIW `shaWithRSA`.
+
+Titles that never verified the certificate are unaffected. To go back to the
+originals for comparison, run with `-certdir certs/original-2016` (the key
+files are shared, copy them in first). To re-issue again, run
+`go run ./tools/gencerts -certdir ./certs`; `certs/ca-key.pem` is the (fake)
+CA's key and is versioned on purpose so the issuer stays stable.
 
 ### One region per listener
 The PS2's SSLv2-compatible hello carries **no SNI**, so each listener serves a
