@@ -14,6 +14,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -262,4 +263,99 @@ func testRSACert(t *testing.T) tls.Certificate {
 		t.Fatal(err)
 	}
 	return tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key}
+}
+
+// TestChainIsSent checks that a CA appended with appendChain ends up in the
+// Certificate message after the leaf, that duplicates are dropped, and that the
+// client can parse the two-certificate list.
+func TestChainIsSent(t *testing.T) {
+	leaf := testRSACert(t)
+	ca := testRSACert(t)
+	appendChain(&leaf, ca.Certificate)
+	appendChain(&leaf, ca.Certificate) // second call must not duplicate
+	appendChain(&leaf, leaf.Certificate[:1])
+	if len(leaf.Certificate) != 2 {
+		t.Fatalf("chain has %d certs, want 2", len(leaf.Certificate))
+	}
+
+	msg := buildCertificate(leaf.Certificate)
+	if msg[0] != hsCertificate {
+		t.Fatalf("type = %d", msg[0])
+	}
+	listLen := int(msg[4])<<16 | int(msg[5])<<8 | int(msg[6])
+	if listLen != len(msg)-7 {
+		t.Fatalf("certificate_list length %d, want %d", listLen, len(msg)-7)
+	}
+	var got [][]byte
+	for p := msg[7:]; len(p) > 0; {
+		n := int(p[0])<<16 | int(p[1])<<8 | int(p[2])
+		got = append(got, p[3:3+n])
+		p = p[3+n:]
+	}
+	if len(got) != 2 || !bytes.Equal(got[0], leaf.Certificate[0]) || !bytes.Equal(got[1], ca.Certificate[0]) {
+		t.Fatalf("parsed %d certs, order/content wrong", len(got))
+	}
+}
+
+func TestLoadPEMCertsBundledCA(t *testing.T) {
+	certs, err := loadPEMCerts("certs/ca-cert.pem")
+	if err != nil {
+		t.Skipf("bundled CA not available: %v", err)
+	}
+	if len(certs) != 1 {
+		t.Fatalf("got %d certs, want 1", len(certs))
+	}
+	c, err := x509.ParseCertificate(certs[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c.IsCA {
+		t.Errorf("%s is not a CA certificate", c.Subject)
+	}
+}
+
+// TestAlertAfterServerHelloDoneIsDecoded drives the handshake up to the
+// server's flight and then answers with a fatal alert, as a title that rejects
+// the certificate would. The logged error must name the alert.
+func TestAlertAfterServerHelloDoneIsDecoded(t *testing.T) {
+	cert := testRSACert(t)
+	srv := &Server{DocRoot: t.TempDir(), defaultRegion: "jp", certs: map[string]*tls.Certificate{"jp": &cert}}
+
+	client, server := net.Pipe()
+	defer client.Close()
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- srv.handshakeAndServe(&tls10Conn{conn: server, br: bufio.NewReader(server)})
+	}()
+
+	challenge := make([]byte, 16)
+	rand.Read(challenge)
+	if _, err := client.Write(buildV2Hello(challenge)); err != nil {
+		t.Fatal(err)
+	}
+	cli := &tls10Conn{conn: client, br: bufio.NewReader(client)}
+	for {
+		typ, body, err := cli.readRecord()
+		if err != nil {
+			t.Fatalf("reading server flight: %v", err)
+		}
+		if typ == ctHandshake && body[0] == hsServerHelloDone {
+			break
+		}
+	}
+	// fatal unknown_ca
+	if err := cli.writeRecord(ctAlert, []byte{2, 48}); err != nil {
+		t.Fatal(err)
+	}
+	client.Close()
+
+	err := <-errCh
+	if err == nil {
+		t.Fatal("handshake succeeded, want an error")
+	}
+	for _, want := range []string{"expected ClientKeyExchange", "fatal alert 48 (unknown_ca)", "SSLv2-compat", "version 3.1"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q lacks %q", err, want)
+		}
+	}
 }

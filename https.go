@@ -2,7 +2,10 @@ package main
 
 import (
 	"crypto/tls"
+	"encoding/pem"
+	"errors"
 	"net"
+	"os"
 )
 
 // Server holds the shared state for the DNAS handler.
@@ -29,4 +32,47 @@ func clientIP(remoteAddr string) string {
 		return host
 	}
 	return remoteAddr
+}
+
+// loadPEMCerts returns the DER bytes of every CERTIFICATE block in a PEM file.
+func loadPEMCerts(path string) ([][]byte, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var certs [][]byte
+	for {
+		var blk *pem.Block
+		blk, raw = pem.Decode(raw)
+		if blk == nil {
+			break
+		}
+		if blk.Type == "CERTIFICATE" {
+			certs = append(certs, blk.Bytes)
+		}
+	}
+	if len(certs) == 0 {
+		return nil, errors.New("no CERTIFICATE block found")
+	}
+	return certs, nil
+}
+
+// appendChain adds the CA certificate(s) to a leaf certificate's chain, the way
+// Apache's SSLCertificateChainFile did in the original DNASrep setup. Titles
+// that verify the chain need the (forged) VeriSign CA to be sent along;
+// titles that don't simply ignore the extra certificate. CA certs already
+// present in the leaf's PEM are not duplicated.
+func appendChain(cert *tls.Certificate, chain [][]byte) {
+	for _, ca := range chain {
+		dup := false
+		for _, have := range cert.Certificate {
+			if string(have) == string(ca) {
+				dup = true
+				break
+			}
+		}
+		if !dup {
+			cert.Certificate = append(cert.Certificate, ca)
+		}
+	}
 }

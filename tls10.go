@@ -108,6 +108,7 @@ type tls10Conn struct {
 	br   *bufio.Reader
 
 	transcript []byte // concatenated handshake messages (bodies, no record headers)
+	helloInfo  string // one-line summary of the ClientHello, for logs
 
 	readActive, writeActive bool
 	readSeq, writeSeq       uint64
@@ -242,6 +243,7 @@ func (s *Server) handshakeAndServe(c *tls10Conn) error {
 	if err != nil {
 		return fmt.Errorf("read ClientHello: %w", err)
 	}
+	log.Printf("tls: %s %s", clientIP(c.conn.RemoteAddr().String()), c.helloInfo)
 
 	// 2) ServerHello with a fresh random.
 	serverRandom := make([]byte, 32)
@@ -267,7 +269,7 @@ func (s *Server) handshakeAndServe(c *tls10Conn) error {
 		return err
 	}
 	if typ != ctHandshake || len(body) < 4 || body[0] != hsClientKeyExchange {
-		return errors.New("tls: expected ClientKeyExchange")
+		return c.unexpected("ClientKeyExchange", typ, body)
 	}
 	c.transcript = append(c.transcript, body...)
 	premaster, err := decryptPremaster(priv, body)
@@ -280,12 +282,12 @@ func (s *Server) handshakeAndServe(c *tls10Conn) error {
 	c.setupKeys(master, clientRandom, serverRandom)
 
 	// 5) ChangeCipherSpec + client Finished.
-	typ, _, err = c.readRecord()
+	typ, body, err = c.readRecord()
 	if err != nil {
 		return err
 	}
 	if typ != ctChangeCipherSpec {
-		return errors.New("tls: expected ChangeCipherSpec")
+		return c.unexpected("ChangeCipherSpec", typ, body)
 	}
 	c.readActive = true
 	c.readSeq = 0
@@ -298,7 +300,7 @@ func (s *Server) handshakeAndServe(c *tls10Conn) error {
 		return err
 	}
 	if typ != ctHandshake || len(fin) != 16 || fin[0] != hsFinished {
-		return errors.New("tls: expected Finished")
+		return c.unexpected("Finished", typ, fin)
 	}
 	if subtle.ConstantTimeCompare(fin[4:16], clientVerify) != 1 {
 		return errors.New("tls: client Finished mismatch")
@@ -354,8 +356,10 @@ func (c *tls10Conn) readClientHello() ([]byte, error) {
 		if 9+csl+sil+cl > len(body) {
 			return nil, errors.New("tls: SSLv2 hello field overflow")
 		}
+		c.helloInfo = fmt.Sprintf("ClientHello: SSLv2-compat, version %d.%d, %d cipher specs, %d-byte challenge",
+			body[1], body[2], csl/3, cl)
 		if !offersCipher(body[9:9+csl], true) {
-			return nil, errors.New("tls: client does not offer TLS_RSA_WITH_3DES_EDE_CBC_SHA")
+			return nil, fmt.Errorf("tls: client does not offer TLS_RSA_WITH_3DES_EDE_CBC_SHA (%s)", c.helloInfo)
 		}
 		challenge := body[9+csl+sil : 9+csl+sil+cl]
 		random := make([]byte, 32)
@@ -393,10 +397,71 @@ func (c *tls10Conn) readClientHello() ([]byte, error) {
 	if off+csLen > len(p) {
 		return nil, errors.New("tls: malformed ClientHello suites")
 	}
+	c.helloInfo = fmt.Sprintf("ClientHello: v3, version %d.%d, %d cipher suites, %d-byte session id",
+		p[0], p[1], csLen/2, sidLen)
 	if !offersCipher(p[off:off+csLen], false) {
-		return nil, errors.New("tls: client does not offer TLS_RSA_WITH_3DES_EDE_CBC_SHA")
+		return nil, fmt.Errorf("tls: client does not offer TLS_RSA_WITH_3DES_EDE_CBC_SHA (%s)", c.helloInfo)
 	}
 	return random, nil
+}
+
+// unexpected builds the error for a record that is not the handshake message
+// we were waiting for. Alerts are decoded, because that is where a title tells
+// us *why* it gave up (unknown_ca, certificate_expired, protocol_version, ...).
+func (c *tls10Conn) unexpected(want string, typ byte, body []byte) error {
+	return fmt.Errorf("tls: expected %s, got %s (%s)", want, describeRecord(typ, body), c.helloInfo)
+}
+
+// alertNames maps TLS 1.0 / SSL 3.0 alert descriptions to their names.
+var alertNames = map[byte]string{
+	0: "close_notify", 10: "unexpected_message", 20: "bad_record_mac",
+	21: "decryption_failed", 22: "record_overflow", 30: "decompression_failure",
+	40: "handshake_failure", 41: "no_certificate", 42: "bad_certificate",
+	43: "unsupported_certificate", 44: "certificate_revoked", 45: "certificate_expired",
+	46: "certificate_unknown", 47: "illegal_parameter", 48: "unknown_ca",
+	49: "access_denied", 50: "decode_error", 51: "decrypt_error",
+	60: "export_restriction", 70: "protocol_version", 71: "insufficient_security",
+	80: "internal_error", 90: "user_canceled", 100: "no_renegotiation",
+}
+
+var handshakeNames = map[byte]string{
+	hsClientHello: "ClientHello", hsServerHello: "ServerHello", hsCertificate: "Certificate",
+	hsServerHelloDone: "ServerHelloDone", hsClientKeyExchange: "ClientKeyExchange",
+	hsFinished: "Finished", 0: "HelloRequest", 12: "ServerKeyExchange",
+	13: "CertificateRequest", 15: "CertificateVerify",
+}
+
+// describeRecord renders a record for log messages.
+func describeRecord(typ byte, body []byte) string {
+	switch typ {
+	case ctAlert:
+		if len(body) < 2 {
+			return fmt.Sprintf("truncated alert %x", body)
+		}
+		level := "warning"
+		if body[0] == 2 {
+			level = "fatal"
+		}
+		name := alertNames[body[1]]
+		if name == "" {
+			name = "unknown"
+		}
+		return fmt.Sprintf("%s alert %d (%s)", level, body[1], name)
+	case ctHandshake:
+		if len(body) == 0 {
+			return "empty handshake record"
+		}
+		name := handshakeNames[body[0]]
+		if name == "" {
+			name = "unknown"
+		}
+		return fmt.Sprintf("handshake %d (%s), %d bytes", body[0], name, len(body))
+	case ctChangeCipherSpec:
+		return "ChangeCipherSpec"
+	case ctApplicationData:
+		return fmt.Sprintf("%d bytes of application data", len(body))
+	}
+	return fmt.Sprintf("record type %d, %d bytes", typ, len(body))
 }
 
 // offersCipher reports whether the cipher list includes 0x000a. v2 lists are

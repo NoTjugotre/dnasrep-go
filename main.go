@@ -70,6 +70,12 @@ func main() {
 		log.Printf("force-success=always: every v2.5_i-connect/v2.5_others request " +
 			"is answered with the gateway's success.raw, captured packets are ignored")
 	}
+	// The CA is sent after the leaf, as Apache did with SSLCertificateChainFile.
+	caPath := filepath.Join(*certdir, "ca-cert.pem")
+	chain, err := loadPEMCerts(caPath)
+	if err != nil {
+		log.Printf("warning: no CA chain (%v) - titles that verify the certificate chain will fail", err)
+	}
 	for _, region := range []string{"jp", "eu", "us"} {
 		certPath := filepath.Join(*certdir, "cert-"+region+".pem")
 		keyPath := filepath.Join(*certdir, "cert-"+region+"-key.pem")
@@ -78,8 +84,9 @@ func main() {
 			log.Printf("warning: could not load %s certificate: %v", region, err)
 			continue
 		}
+		appendChain(&cert, chain)
 		srv.certs[region] = &cert
-		log.Printf("loaded %s certificate", region)
+		log.Printf("loaded %s certificate (%d-cert chain)", region, len(cert.Certificate))
 	}
 	if len(srv.certs) == 0 {
 		log.Fatalf("no certificates loaded from %s", *certdir)

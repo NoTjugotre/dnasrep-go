@@ -49,7 +49,7 @@ sudo ./dnasrep \
 | Flag | Default | Meaning |
 | --- | --- | --- |
 | `-docroot` | `./gate` | document root containing `us-gw/`, `eu-gw/`, `gai-gw/`, `bbnavi/` |
-| `-certdir` | `./certs` | directory holding `cert-{jp,eu,us}[-key].pem` |
+| `-certdir` | `./certs` | directory holding `cert-{jp,eu,us}[-key].pem` and `ca-cert.pem` |
 | `-https` | `:443` | TLS listen address(es), comma-separated or repeated |
 | `-dns` | `:53` | UDP address of the DNS redirector (`""` disables DNS) |
 | `-upstream` | `1.1.1.1:53` | upstream resolver for non-DNAS queries |
@@ -126,6 +126,15 @@ Every client that reaches the server is logged:
 - **Connection level** – each accepted TCP connection is logged with its remote
   IP (`https: connection from <ip>`). This captures clients even when the TLS
   handshake later fails, which a request-level log would miss.
+- **Handshake level** – each ClientHello is summarised
+  (`tls: <ip> ClientHello: SSLv2-compat, version 3.1, 25 cipher specs, 16-byte challenge`),
+  and a handshake that dies is logged with what the client sent instead of the
+  expected message, alerts decoded:
+  `tls: <ip> handshake/serve: tls: expected ClientKeyExchange, got fatal alert 48 (unknown_ca) (ClientHello: …)`.
+  The alert description is the console telling you *why* it gave up
+  (`unknown_ca`/`bad_certificate` → chain or CA problem, `certificate_expired`
+  → see [Certificate expiry](#certificate-expiry), `protocol_version` → the
+  title wants a TLS version this server does not speak).
 - **Request level** – each decrypted HTTP request is logged with client IP,
   method, path, and body size
   (`https: <ip> POST /us-gw/v2.5_others (35-byte body)`).
@@ -174,11 +183,21 @@ title only offers something else (e.g. pure SSLv3, or RC4-only), the handshake
 will fail with a clear log line naming the missing cipher; open an issue with a
 capture and the suite can be added.
 
+### Certificate chain
+The server sends the leaf certificate followed by `ca-cert.pem` (the forged
+VeriSign "Class 3 Public Primary CA" that signed the leaves), exactly as the
+original Apache setup did via `SSLCertificateChainFile`. Titles whose DNAS
+library verifies the chain need this; titles that don't ignore the extra
+certificate. A missing `ca-cert.pem` only logs a warning at startup, but expect
+`unknown_ca`/`bad_certificate` alerts from stricter titles without it.
+
 ### Certificate expiry
-The bundled certificates (`etc/dnas/cert-*.pem`) **expired in April 2026**. The
-server presents them unchanged; the PS2 historically checks neither expiry nor
-OCSP, so the trick keeps working. If you reissue them, keep the forged VeriSign
-CA chain (`ca-cert.pem`) so the PS2 still trusts them.
+The bundled certificates (`etc/dnas/cert-*.pem`, `ca-cert.pem`) **expired in
+April 2026**. The server presents them unchanged; the PS2 historically checks
+neither expiry nor OCSP, so the trick keeps working — a title that does check
+will abort with a `certificate_expired` alert (see [Logging](#logging)). If you
+reissue them, keep the forged VeriSign CA chain (`ca-cert.pem`) so the PS2
+still trusts them.
 
 ### One region per listener
 The PS2's SSLv2-compatible hello carries **no SNI**, so each listener serves a
