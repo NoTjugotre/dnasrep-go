@@ -17,7 +17,8 @@ A single, dependency-free Go binary that replaces the entire **DNASrep** stack
    Replaces the three Apache virtual hosts and their patched OpenSSL.
 3. **Packet replay** – ports `connect.php` (3DES-EDE-CBC encryption with keys
    derived from the request packet) and `others.php` (raw replay) one-to-one to
-   Go. Replies are sent as **HTTP/1.0** with `Content-Type: image/gif`,
+   Go. `connect.php` serves both `v2.5_i-connect` (disc titles) and
+   `v2.1_d-connect` (HDD / PSBBN). Replies are sent as **HTTP/1.0** with `Content-Type: image/gif`,
    identical to Apache's `force-response-1.0` that keeps the PS2 from throwing
    "error 106".
 
@@ -104,7 +105,7 @@ counterpart: it lives next to `error.raw`, one per gateway
 ./dnasrep -force-success=always       # blunt test mode
 ```
 
-Both modes cover both replay endpoints (`v2.5_i-connect` and `v2.5_others`), and
+Both modes cover all replay endpoints (`v2.5_i-connect`, its HDD twin `v2.1_d-connect`, and `v2.5_others`), and
 `success.raw` is sent verbatim — no 3DES envelope is applied, exactly as with
 `error.raw`. If a gateway has no `success.raw`, the request falls back to
 `error.raw` and a warning is logged. Overridden requests are logged as

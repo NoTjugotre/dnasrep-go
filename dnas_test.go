@@ -152,6 +152,10 @@ func TestForceSuccessModes(t *testing.T) {
 		r.path = "/us-gw/v2.5_i-connect"
 		return r
 	}
+	dconnect := func(r httpRequest) httpRequest {
+		r.path = "/us-gw/v2.1_d-connect"
+		return r
+	}
 
 	cases := []struct {
 		name string
@@ -168,6 +172,10 @@ func TestForceSuccessModes(t *testing.T) {
 		{"fallback/captured", successFallback, othersRequest(), "CAPTURED"},
 		{"fallback/uncaptured", successFallback, unknownRequest(), "SUCCESS"},
 		{"fallback/uncaptured i-connect", successFallback, connect(unknownRequest()), "SUCCESS"},
+
+		// v2.1_d-connect (HDD) is routed like v2.5_i-connect.
+		{"fallback/uncaptured d-connect", successFallback, dconnect(unknownRequest()), "SUCCESS"},
+		{"off/uncaptured d-connect", successOff, dconnect(unknownRequest()), "ERROR"},
 
 		// always - success.raw wins even where a capture exists.
 		{"always/captured", successAlways, othersRequest(), "SUCCESS"},
@@ -403,5 +411,30 @@ func TestDNSLookupSelectsCertificate(t *testing.T) {
 	d.handle(pc, src, buildQuery("www01.kddi-mmbb.jp", 1))
 	if cert, _ := srv.certFor("192.168.2.55"); cert != eu {
 		t.Fatal("KDDI lookup must not change the region hint")
+	}
+}
+
+// TestDConnectMatchesIConnect checks that the HDD endpoint runs the full
+// connect pipeline (packet lookup + both encryption passes), not a plain replay.
+func TestDConnectMatchesIConnect(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(root+"/us-gw/packets", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := randBytes(t, 0x48+0xec)
+	copy(body[0:4], []byte{0x01, 0x18, 0x00, 0x00})
+	copy(body[0x2c:0x2c+8], []byte{0x00, 0x44, 0xd7, 0x11, 0xbb, 0x7b, 0xfb, 0x3a})
+	packet := randBytes(t, 0x148)
+	if err := os.WriteFile(root+"/us-gw/packets/0044d711bb7bfb3a_01180000", packet, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s := &Server{DocRoot: root}
+	i := s.dispatch(httpRequest{method: "POST", path: "/us-gw/v2.5_i-connect", body: body})
+	d := s.dispatch(httpRequest{method: "POST", path: "/us-gw/v2.1_d-connect", body: body})
+	if !bytes.Equal(i, d) {
+		t.Fatal("v2.1_d-connect reply differs from v2.5_i-connect")
+	}
+	if bytes.HasSuffix(d, packet) {
+		t.Fatal("reply is the unencrypted capture; connect pipeline was not applied")
 	}
 }

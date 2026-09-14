@@ -109,8 +109,8 @@ func loadPacket(gwDir, name string) ([]byte, error) {
 	return os.ReadFile(filepath.Join(gwDir, "packets", name))
 }
 
-// connectReply reproduces connect.php (the "v2.5_i-connect" endpoint) and
-// returns the raw reply payload.
+// connectReply reproduces connect.php (the "v2.5_i-connect" endpoint, and its
+// HDD twin "v2.1_d-connect") and returns the raw reply payload.
 func (s *Server) connectReply(gwDir string, req []byte) []byte {
 	name, ok := packetName(req, 0x2c)
 	if !ok {

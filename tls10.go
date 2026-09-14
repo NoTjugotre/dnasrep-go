@@ -649,7 +649,9 @@ func parseHTTPRequest(buf []byte) (bool, httpRequest) {
 func (s *Server) dispatch(req httpRequest) []byte {
 	base := path.Base(req.path)
 	switch base {
-	case "v2.5_i-connect", "v2.5_others":
+	// v2.1_d-connect is the HDD (PSBBN / HDD-installed titles) flavour of the
+	// connect endpoint; same query layout and reply pipeline as v2.5_i-connect.
+	case "v2.5_i-connect", "v2.1_d-connect", "v2.5_others":
 		gwDir, ok := s.gwDirFor(req.path)
 		if !ok {
 			return httpResponse("image/gif", nil)
@@ -658,10 +660,10 @@ func (s *Server) dispatch(req httpRequest) []byte {
 			log.Printf("https: force-success: answering %s with success.raw", req.path)
 			return httpResponse("image/gif", s.successRaw(gwDir))
 		}
-		if base == "v2.5_i-connect" {
-			return httpResponse("image/gif", s.connectReply(gwDir, req.body))
+		if base == "v2.5_others" {
+			return httpResponse("image/gif", s.othersReply(gwDir, req.body))
 		}
-		return httpResponse("image/gif", s.othersReply(gwDir, req.body))
+		return httpResponse("image/gif", s.connectReply(gwDir, req.body))
 	default:
 		return s.serveStatic(req.path)
 	}
