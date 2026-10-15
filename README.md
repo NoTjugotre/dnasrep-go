@@ -62,6 +62,7 @@ sudo ./dnasrep \
 | `-dns-config` | `dns.config` | extra redirect rules file (see below) |
 | `-default-region` | `jp` | certificate region used when no DNS lookup revealed the client's region (see below) |
 | `-force-success` | `off` | use the gateway's `success.raw`: `fallback` or `always` (experimental, see below) |
+| `-proxy` | none | forward a path prefix to an HTTP backend: `/prefix=http://host[:port][/path]` (repeatable, see below) |
 
 On the PS2, set this machine as the **primary DNS**; the redirector handles the rest.
 
@@ -82,6 +83,30 @@ match wins, and rules in the file override the `-dns-suffix` defaults for the
 same name. Names with no matching rule are forwarded to `-upstream`. A missing
 `dns.config` is fine (the built-in DNAS defaults still apply); a file explicitly
 passed with `-dns-config` that is missing or malformed is a startup error.
+
+## Proxying non-DNAS requests
+
+Some titles use the console's SSL library for more than DNAS, e.g. Auto
+Modellista's ranking upload (`POST /amusa/am_up.php`). Those connections open
+with the same SSLv2-compatible hello and carry no SNI, so only this server can
+complete their handshake, and on a shared IP every such request lands here.
+`-proxy` forwards everything under a path prefix to the HTTP server that
+actually serves it:
+
+```sh
+./dnasrep -proxy /amusa/=http://127.0.0.1:8080
+```
+
+The full request path and query are appended to the target URL's path
+(`/amusa/am_up.php` → `http://127.0.0.1:8080/amusa/am_up.php`), and the method,
+body and headers are passed on, including the client's `Host`, plus
+`X-Forwarded-For` and `X-Forwarded-Proto: https`. The backend's reply is sent
+back as HTTP/1.0 with `Connection: close`, like every other reply of this
+server; redirects are passed to the console, not followed. The flag can be
+repeated; the longest matching prefix wins, and DNAS paths are only proxied if
+a prefix covers them. An unreachable backend yields `502 Bad Gateway`, and each
+proxied request is logged (`https: proxy POST /amusa/am_up.php ->
+http://127.0.0.1:8080/amusa/am_up.php: 200 OK (0-byte body)`).
 
 ## Force-success workaround (experimental)
 

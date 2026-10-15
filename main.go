@@ -32,6 +32,13 @@ func (s *stringList) Set(v string) error {
 	return nil
 }
 
+// proxyList collects repeated -proxy flags. Unlike stringList it does not split
+// on commas, which may appear in a URL.
+type proxyList []string
+
+func (p *proxyList) String() string     { return strings.Join(*p, " ") }
+func (p *proxyList) Set(v string) error { *p = append(*p, strings.TrimSpace(v)); return nil }
+
 func main() {
 	var (
 		docroot   = flag.String("docroot", "./gate", "path to the DNAS document root (contains us-gw, eu-gw, ...)")
@@ -48,6 +55,8 @@ func main() {
 	flag.Var(&forceSucc, "force-success", "use the gateway's success.raw: \"fallback\" for titles without a captured packet, \"always\" for every request (default \"off\")")
 	var suffixes stringList
 	flag.Var(&suffixes, "dns-suffix", "domain suffix(es) to redirect (default dnas.playstation.org)")
+	var proxies proxyList
+	flag.Var(&proxies, "proxy", "forward requests under a path prefix to an HTTP backend: /prefix=http://host[:port][/path] (repeatable)")
 	flag.Parse()
 
 	if len(httpsAddrs) == 0 {
@@ -62,6 +71,13 @@ func main() {
 		defaultRegion: *defRegion,
 		certs:         map[string]*tls.Certificate{},
 		ForceSuccess:  forceSucc,
+	}
+	var err error
+	if srv.Proxies, err = parseProxyRules(proxies); err != nil {
+		log.Fatal(err)
+	}
+	for _, r := range srv.Proxies {
+		log.Printf("https: proxying %s* to %s", r.prefix, r.target)
 	}
 	// When we are also the console's DNS, the gate1.<region> lookup that
 	// precedes every DNAS connection tells us which certificate to present.

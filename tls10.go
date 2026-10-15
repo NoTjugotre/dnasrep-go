@@ -19,6 +19,7 @@ import (
 	"io"
 	"log"
 	"net"
+	"net/http"
 	"os"
 	"path"
 	"path/filepath"
@@ -58,6 +59,8 @@ const (
 	keyLen   = 24 // 3DES-EDE
 	ivLen    = 8  // DES block
 	blockLen = 8
+	// maxPlaintext is the largest record fragment TLS 1.0 allows.
+	maxPlaintext = 1 << 14
 )
 
 var tls10Version = []byte{0x03, 0x01}
@@ -602,9 +605,16 @@ func (s *Server) serveHTTP(c *tls10Conn) error {
 		}
 		buf = append(buf, chunk...)
 		if complete, req := parseHTTPRequest(buf); complete {
-			log.Printf("https: %s %s %s (%d-byte body)",
-				clientIP(c.conn.RemoteAddr().String()), req.method, req.path, len(req.body))
+			req.remote = clientIP(c.conn.RemoteAddr().String())
+			log.Printf("https: %s %s %s (%d-byte body)", req.remote, req.method, req.path, len(req.body))
 			resp := s.dispatch(req)
+			// A record carries at most 2^14 bytes of plaintext (RFC 2246 6.2.1).
+			for len(resp) > maxPlaintext {
+				if err := c.writeRecord(ctApplicationData, resp[:maxPlaintext]); err != nil {
+					return err
+				}
+				resp = resp[maxPlaintext:]
+			}
 			return c.writeRecord(ctApplicationData, resp)
 		}
 	}
@@ -613,7 +623,9 @@ func (s *Server) serveHTTP(c *tls10Conn) error {
 type httpRequest struct {
 	method string
 	path   string
+	header http.Header
 	body   []byte
+	remote string // client IP, set by serveHTTP
 }
 
 // parseHTTPRequest returns (true, req) once the full request is buffered.
@@ -628,12 +640,13 @@ func parseHTTPRequest(buf []byte) (bool, httpRequest) {
 	if len(parts) < 2 {
 		return false, httpRequest{}
 	}
-	contentLen := 0
+	header := http.Header{}
 	for _, l := range lines[1:] {
-		if k, v, ok := strings.Cut(l, ":"); ok && strings.EqualFold(strings.TrimSpace(k), "content-length") {
-			contentLen, _ = strconv.Atoi(strings.TrimSpace(v))
+		if k, v, ok := strings.Cut(l, ":"); ok {
+			header.Add(strings.TrimSpace(k), strings.TrimSpace(v))
 		}
 	}
+	contentLen, _ := strconv.Atoi(header.Get("Content-Length"))
 	bodyStart := idx + 4
 	if len(buf)-bodyStart < contentLen {
 		return false, httpRequest{}
@@ -641,12 +654,16 @@ func parseHTTPRequest(buf []byte) (bool, httpRequest) {
 	return true, httpRequest{
 		method: parts[0],
 		path:   parts[1],
+		header: header,
 		body:   buf[bodyStart : bodyStart+contentLen],
 	}
 }
 
 // dispatch routes the request the same way Apache + the PHP scripts did.
 func (s *Server) dispatch(req httpRequest) []byte {
+	if rule := s.proxyFor(req.path); rule != nil {
+		return s.proxy(rule, req)
+	}
 	base := path.Base(req.path)
 	switch base {
 	// v2.1_d-connect is the HDD (PSBBN / HDD-installed titles) flavour of the
