@@ -18,7 +18,12 @@ A single, dependency-free Go binary that replaces the entire **DNASrep** stack
 3. **Packet replay** – ports `connect.php` (3DES-EDE-CBC encryption with keys
    derived from the request packet) and `others.php` (raw replay) one-to-one to
    Go. `connect.php` serves both `v2.5_i-connect` (disc titles) and
-   `v2.1_d-connect` (HDD / PSBBN). Replies are sent as **HTTP/1.0** with `Content-Type: image/gif`,
+   `v2.1_d-connect` (HDD / PSBBN). An install query (`0110`, sent before a title
+   saves DNAS-encrypted data such as a downloaded patch) with no capture of its
+   own is answered with the title's normal `0118` capture, or failing that its
+   unique-ID `0108` capture, relabelled `0110` (`-force-success` relabels
+   `success.raw` the same way). Every lookup is
+   logged with the packet name. Replies are sent as **HTTP/1.0** with `Content-Type: image/gif`,
    identical to Apache's `force-response-1.0` that keeps the PS2 from throwing
    "error 106".
 

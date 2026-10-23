@@ -109,16 +109,63 @@ func loadPacket(gwDir, name string) ([]byte, error) {
 	return os.ReadFile(filepath.Join(gwDir, "packets", name))
 }
 
+// Query-type byte 1 names the DNAS operation: 0x10 is the install
+// authentication a title runs before it saves DNAS-encrypted data, 0x18 the
+// normal (net start) authentication and 0x08 the unique-ID query. A real
+// install reply, connect or others, is the normal reply with byte 1 set to
+// 0x10 and nothing else changed. The install authentication only checks the
+// reply status, and the title's DNAS encryption afterwards reads nothing
+// from it, so a relabelled unique-ID reply serves as well when a title has
+// no normal capture.
+const (
+	opInstall  = 0x10
+	opNormal   = 0x18
+	opUniqueID = 0x08
+)
+
+// loadReply finds the captured reply for req. An install query without a
+// capture of its own is answered with the title's normal reply, or failing
+// that its unique-ID reply, marked as an install reply.
+func loadReply(gwDir string, req []byte, gameIDOff int) ([]byte, string, error) {
+	name, ok := packetName(req, gameIDOff)
+	if !ok {
+		return nil, "", errMalformed
+	}
+	packet, err := loadPacket(gwDir, name)
+	if err == nil {
+		log.Printf("https: query %s: captured reply", name)
+		return packet, name, nil
+	}
+	if req[1] == opInstall {
+		for _, op := range []byte{opNormal, opUniqueID} {
+			other := append([]byte(nil), req...)
+			other[1] = op
+			otherName, _ := packetName(other, gameIDOff)
+			if packet, err = loadPacket(gwDir, otherName); err == nil {
+				if len(packet) < 2 {
+					return nil, name, errMalformed
+				}
+				packet[1] = opInstall
+				log.Printf("https: query %s: answering with %s as an install reply", name, otherName)
+				return packet, name, nil
+			}
+		}
+	}
+	log.Printf("https: query %s: no captured reply", name)
+	return nil, name, err
+}
+
+var errMalformed = errors.New("malformed request")
+
 // connectReply reproduces connect.php (the "v2.5_i-connect" endpoint, and its
 // HDD twin "v2.1_d-connect") and returns the raw reply payload.
 func (s *Server) connectReply(gwDir string, req []byte) []byte {
-	name, ok := packetName(req, 0x2c)
-	if !ok {
+	packet, name, err := loadReply(gwDir, req, 0x2c)
+	if err == errMalformed {
 		return s.errorRaw(gwDir)
 	}
-	packet, err := loadPacket(gwDir, name)
 	if err != nil {
-		return s.missingPacketReply(gwDir, name)
+		return s.missingPacketReply(gwDir, name, req)
 	}
 	k1, k2, k3, seed, err := deriveKeys(req)
 	if err != nil {
@@ -138,13 +185,12 @@ func (s *Server) connectReply(gwDir string, req []byte) []byte {
 // othersReply reproduces others.php (the "v2.5_others" endpoint): a plain
 // replay of the captured reply, no encryption.
 func (s *Server) othersReply(gwDir string, req []byte) []byte {
-	name, ok := packetName(req, 0x1b)
-	if !ok {
+	packet, name, err := loadReply(gwDir, req, 0x1b)
+	if err == errMalformed {
 		return s.errorRaw(gwDir)
 	}
-	packet, err := loadPacket(gwDir, name)
 	if err != nil {
-		return s.missingPacketReply(gwDir, name)
+		return s.missingPacketReply(gwDir, name, req)
 	}
 	return packet
 }
@@ -153,12 +199,22 @@ func (s *Server) othersReply(gwDir string, req []byte) []byte {
 // Normally that is the gateway's error.raw; with -force-success=fallback the
 // success.raw is sent instead, which is the point of the workaround. Requests
 // that are malformed (rather than merely uncaptured) still get error.raw.
-func (s *Server) missingPacketReply(gwDir, name string) []byte {
+func (s *Server) missingPacketReply(gwDir, name string, req []byte) []byte {
 	if s.ForceSuccess == successFallback {
 		log.Printf("https: force-success: no capture %q - answering with success.raw", name)
-		return s.successRaw(gwDir)
+		return s.successReply(gwDir, req)
 	}
 	return s.errorRaw(gwDir)
+}
+
+// successReply is success.raw for req: an install query gets it marked as an
+// install reply, like the captured ones.
+func (s *Server) successReply(gwDir string, req []byte) []byte {
+	reply := append([]byte(nil), s.successRaw(gwDir)...)
+	if len(req) > 1 && req[1] == opInstall && len(reply) > 1 {
+		reply[1] = opInstall
+	}
+	return reply
 }
 
 // successRaw returns the gateway's success.raw payload, the counterpart to

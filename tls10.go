@@ -675,7 +675,7 @@ func (s *Server) dispatch(req httpRequest) []byte {
 		}
 		if s.ForceSuccess == successAlways {
 			log.Printf("https: force-success: answering %s with success.raw", req.path)
-			return httpResponse("image/gif", s.successRaw(gwDir))
+			return httpResponse("image/gif", s.successReply(gwDir, req.body))
 		}
 		if base == "v2.5_others" {
 			return httpResponse("image/gif", s.othersReply(gwDir, req.body))
