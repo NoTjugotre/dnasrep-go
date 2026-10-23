@@ -1,0 +1,220 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 1144" width="1000" height="1144" role="img" aria-labelledby="title desc">
+  <title id="title">dnasrep packet flow</title>
+  <desc id="desc">How dnasrep answers a DNAS request from a PS2: DNS redirect with region hint, hand-rolled TLS 1.0 handshake, request dispatch, captured-packet lookup with install fallback, 3DES encryption for connect replies, and the two places where -force-success short-circuits the flow with success.raw.</desc>
+  <style>
+    text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; fill: #1f2328; }
+    .bg { fill: #ffffff; }
+    .lane { fill: #f6f8fa; stroke: #d0d7de; }
+    .box { fill: #f6f8fa; stroke: #d0d7de; stroke-width: 1.2; }
+    .ok { fill: #dafbe1; stroke: #1a7f37; stroke-width: 1.2; }
+    .force { fill: #fff1e5; stroke: #bc4c00; stroke-width: 1.8; }
+    .err { fill: #ffebe9; stroke: #cf222e; stroke-width: 1.4; }
+    .crypto { fill: #ddf4ff; stroke: #0969da; stroke-width: 1.2; }
+    .title { font-size: 22px; font-weight: 700; }
+    .sub { font-size: 13px; fill: #59636e; }
+    .lanet { font-size: 17px; font-weight: 700; }
+    .h { font-size: 14px; font-weight: 600; }
+    .s { font-size: 12px; }
+    .m { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px; }
+    .tag { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px; fill: #59636e; }
+    .mut { fill: #59636e; }
+    .lbl { font-size: 11px; fill: #59636e; }
+    .tg { fill: #1a7f37; }
+    .to { fill: #bc4c00; }
+    .tr { fill: #cf222e; }
+    .tb { fill: #0969da; }
+    .b { font-weight: 600; }
+    .a { fill: none; stroke-width: 1.6; }
+    .an { stroke: #59636e; }
+    .ad { stroke: #59636e; stroke-dasharray: 4 3; }
+    .ag { stroke: #1a7f37; }
+    .ao { stroke: #bc4c00; stroke-width: 2.6; }
+    .ar { stroke: #cf222e; }
+    .ab { stroke: #0969da; stroke-dasharray: 5 4; }
+    .hn { fill: #59636e; }
+    .hg { fill: #1a7f37; }
+    .ho { fill: #bc4c00; }
+    .hr { fill: #cf222e; }
+    .hb { fill: #0969da; }
+    @media (prefers-color-scheme: dark) {
+      text { fill: #e6edf3; }
+      .bg { fill: #0d1117; }
+      .lane, .box { fill: #161b22; stroke: #3d444d; }
+      .ok { fill: #12261e; stroke: #3fb950; }
+      .force { fill: #2d1b0e; stroke: #f0883e; }
+      .err { fill: #2d1214; stroke: #f85149; }
+      .crypto { fill: #0c2141; stroke: #4493f8; }
+      .sub, .tag, .mut, .lbl { fill: #9198a1; }
+      .tg { fill: #3fb950; }
+      .to { fill: #f0883e; }
+      .tr { fill: #f85149; }
+      .tb { fill: #4493f8; }
+      .an, .ad { stroke: #9198a1; }
+      .ag { stroke: #3fb950; }
+      .ao { stroke: #f0883e; }
+      .ar { stroke: #f85149; }
+      .ab { stroke: #4493f8; }
+      .hn { fill: #9198a1; }
+      .hg { fill: #3fb950; }
+      .ho { fill: #f0883e; }
+      .hr { fill: #f85149; }
+      .hb { fill: #4493f8; }
+    }
+  </style>
+  <defs>
+    <marker id="hn" viewBox="0 0 10 10" refX="9" refY="5" markerUnits="userSpaceOnUse" markerWidth="9" markerHeight="9" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="hn"/></marker>
+    <marker id="hg" viewBox="0 0 10 10" refX="9" refY="5" markerUnits="userSpaceOnUse" markerWidth="9" markerHeight="9" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="hg"/></marker>
+    <marker id="ho" viewBox="0 0 10 10" refX="9" refY="5" markerUnits="userSpaceOnUse" markerWidth="12" markerHeight="12" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ho"/></marker>
+    <marker id="hr" viewBox="0 0 10 10" refX="9" refY="5" markerUnits="userSpaceOnUse" markerWidth="9" markerHeight="9" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="hr"/></marker>
+    <marker id="hb" viewBox="0 0 10 10" refX="9" refY="5" markerUnits="userSpaceOnUse" markerWidth="9" markerHeight="9" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="hb"/></marker>
+  </defs>
+
+  <rect class="bg" x="0" y="0" width="1000" height="1144" rx="14"/>
+
+  <text class="title" x="24" y="40">dnasrep — packet flow</text>
+  <text class="sub" x="24" y="64">How a DNAS request from the PS2 is answered, and where <tspan class="to b">-force-success</tspan> short-circuits it</text>
+
+  <!-- PS2 lane -->
+  <rect class="lane" x="24" y="88" width="110" height="952" rx="12"/>
+  <text class="lanet" transform="translate(78,564) rotate(-90)" text-anchor="middle">PlayStation 2</text>
+  <text class="sub" transform="translate(100,564) rotate(-90)" text-anchor="middle">DNAS client (disc title, HDD title, PSBBN)</text>
+
+  <!-- 1: DNS -->
+  <path class="a an" d="M134 132 H210" marker-start="url(#hn)" marker-end="url(#hn)"/>
+  <text class="lbl" x="172" y="124" text-anchor="middle">1 · DNS</text>
+  <rect class="box" x="210" y="96" width="530" height="72" rx="8"/>
+  <text class="h" x="224" y="119">DNS redirector</text>
+  <text class="tag" x="726" y="119" text-anchor="end">dns.go · UDP :53</text>
+  <text class="s" x="224" y="141"><tspan class="m">*.dnas.playstation.org</tspan> and <tspan class="m">dns.config</tspan> names → <tspan class="m">-redirect-ip</tspan></text>
+  <text class="s" x="224" y="159">remembers the region (jp / eu / us) each client IP resolved</text>
+  <path class="a an" d="M740 132 H770" marker-start="url(#hn)" marker-end="url(#hn)"/>
+  <rect class="box" x="770" y="104" width="206" height="56" rx="8"/>
+  <text class="h" x="784" y="127">Upstream resolver</text>
+  <text class="s mut" x="784" y="147">all other names · <tspan class="m">-upstream</tspan></text>
+
+  <!-- region hint -->
+  <path class="a ab" d="M640 168 V207" marker-end="url(#hb)"/>
+  <text class="lbl tb" x="650" y="192">region hint</text>
+
+  <!-- 2+3: TLS -->
+  <path class="a an" d="M134 236 H210" marker-start="url(#hn)" marker-end="url(#hn)"/>
+  <text class="lbl" x="172" y="228" text-anchor="middle">2 · handshake</text>
+  <path class="a an" d="M134 282 H210" marker-end="url(#hn)"/>
+  <text class="lbl" x="172" y="274" text-anchor="middle">3 · request</text>
+  <rect class="box" x="210" y="208" width="530" height="96" rx="8"/>
+  <text class="h" x="224" y="231">TLS 1.0 server</text>
+  <text class="tag" x="726" y="231" text-anchor="end">tls10.go · TCP :443</text>
+  <text class="s" x="224" y="253">SSLv2-compatible ClientHello, no SNI</text>
+  <text class="s" x="224" y="271">certificate: DNS-hinted region, else <tspan class="m">-default-region</tspan> (+ CA chain)</text>
+  <text class="s" x="224" y="289">RSA key exchange · 3DES-EDE-CBC-SHA · transcript hashes the v2 hello</text>
+  <path class="a ad" d="M770 256 H740" marker-end="url(#hn)"/>
+  <rect class="box" x="770" y="222" width="206" height="68" rx="8"/>
+  <text class="h" x="784" y="245">certs/</text>
+  <text class="tag" x="962" y="245" text-anchor="end">2016 originals</text>
+  <text class="m" x="784" y="265">cert-{jp,eu,us}.pem</text>
+  <text class="m" x="784" y="281">ca-cert.pem</text>
+
+  <!-- dispatch -->
+  <path class="a an" d="M475 304 V339" marker-end="url(#hn)"/>
+  <text class="lbl" x="485" y="326">decrypted HTTP request</text>
+  <rect class="box" x="210" y="340" width="530" height="70" rx="8"/>
+  <text class="h" x="224" y="363">dispatch(path)</text>
+  <text class="tag" x="726" y="363" text-anchor="end">tls10.go</text>
+  <text class="s" x="224" y="384">routes requests the way Apache + connect.php / others.php did</text>
+  <text class="s" x="224" y="401">replay endpoints → gateway dir <tspan class="m">gate/&lt;us|eu|gai&gt;-gw/</tspan></text>
+  <path class="a an" d="M740 352 H769" marker-end="url(#hn)"/>
+  <rect class="box" x="770" y="330" width="206" height="44" rx="8"/>
+  <text class="s b" x="784" y="348"><tspan class="m">-proxy</tspan> prefix match</text>
+  <text class="s mut" x="784" y="366">→ HTTP backend (proxy.go)</text>
+  <path class="a an" d="M740 402 H769" marker-end="url(#hn)"/>
+  <rect class="box" x="770" y="380" width="206" height="44" rx="8"/>
+  <text class="s b" x="784" y="398">other paths</text>
+  <text class="s mut" x="784" y="416">→ serveStatic (bbnavi, …)</text>
+
+  <!-- force-success = always -->
+  <path class="a an" d="M355 410 V449" marker-end="url(#hn)"/>
+  <text class="m mut" x="365" y="434">v2.5_i-connect · v2.1_d-connect · v2.5_others</text>
+  <rect class="force" x="210" y="450" width="290" height="60" rx="8"/>
+  <text class="h" x="355" y="476" text-anchor="middle"><tspan class="m to b" style="font-size:13px">-force-success</tspan> = always ?</text>
+  <text class="s mut" x="355" y="496" text-anchor="middle">experimental test mode</text>
+  <path class="a ao" d="M500 480 H873 V538" marker-end="url(#ho)"/>
+  <text class="s to b" x="636" y="472" text-anchor="middle">yes — skip lookup and encryption</text>
+
+  <!-- loadReply -->
+  <path class="a an" d="M355 510 V539" marker-end="url(#hn)"/>
+  <text class="lbl" x="365" y="529">no (off / fallback)</text>
+  <rect class="box" x="210" y="540" width="290" height="110" rx="8"/>
+  <text class="h" x="224" y="563">loadReply</text>
+  <text class="tag" x="486" y="563" text-anchor="end">dnas.go</text>
+  <text class="m" x="224" y="584">packets/&lt;gameID&gt;_&lt;qrytype&gt;</text>
+  <text class="s mut" x="224" y="602">gameID @0x2c connect · @0x1b others</text>
+  <text class="s tg" x="224" y="622">install (0x10) without own capture:</text>
+  <text class="m tg" x="224" y="640">→ _0118, then _0108, byte 1 := 0x10</text>
+
+  <!-- no capture -->
+  <path class="a an" d="M500 596 H529" marker-end="url(#hn)"/>
+  <text class="lbl" x="515" y="588" text-anchor="middle">miss</text>
+  <rect class="force" x="530" y="560" width="210" height="72" rx="8"/>
+  <text class="h" x="635" y="583" text-anchor="middle">no capture found</text>
+  <text class="tag" x="635" y="601" text-anchor="middle">missingPacketReply</text>
+  <text class="s" x="635" y="621" text-anchor="middle"><tspan class="m to b">-force-success</tspan> = fallback ?</text>
+  <path class="a ao" d="M740 596 H768" marker-end="url(#ho)"/>
+  <text class="lbl to b" x="755" y="588" text-anchor="middle">yes</text>
+  <path class="a ar" d="M635 632 V679" marker-end="url(#hr)"/>
+  <text class="lbl tr" x="645" y="660">no (off)</text>
+  <rect class="err" x="530" y="680" width="210" height="64" rx="8"/>
+  <text class="h tr" x="635" y="705" text-anchor="middle">error.raw</text>
+  <text class="s" x="635" y="726" text-anchor="middle">“auth failed”, sent verbatim</text>
+
+  <!-- success.raw -->
+  <rect class="force" x="770" y="540" width="206" height="170" rx="8"/>
+  <text class="h to" x="873" y="564" text-anchor="middle">successReply</text>
+  <text class="m" x="873" y="583" text-anchor="middle">gate/&lt;gw&gt;/success.raw</text>
+  <text class="s" x="873" y="605" text-anchor="middle">byte 1 := request's operation</text>
+  <text class="m" x="873" y="624" text-anchor="middle">0x18 normal · 0x10 install</text>
+  <text class="m" x="873" y="641" text-anchor="middle">0x08 unique · 0x22 PSBBN</text>
+  <text class="s" x="873" y="663" text-anchor="middle">no 3DES envelope</text>
+  <text class="s mut" x="873" y="683" text-anchor="middle">file missing → error.raw</text>
+
+  <!-- captured replay -->
+  <path class="a ag" d="M375 650 V689" marker-end="url(#hg)"/>
+  <text class="lbl tg" x="385" y="674">captured · connect</text>
+  <path class="a ag" d="M228 650 V959" marker-end="url(#hg)"/>
+  <text class="lbl tg" transform="translate(222,820) rotate(-90)" text-anchor="middle">v2.5_others: replayed as is</text>
+  <rect class="crypto" x="250" y="690" width="250" height="88" rx="8"/>
+  <text class="h" x="264" y="712">deriveKeys(request)</text>
+  <text class="m" x="264" y="732">SHA1(req[0x34:+0x100])</text>
+  <text class="m" x="264" y="749">SHA1(req[0x48:+0xEC])</text>
+  <text class="s" x="264" y="768">→ 3DES keys K1, K2, K3 + IV</text>
+  <path class="a ag" d="M375 778 V799" marker-end="url(#hg)"/>
+  <rect class="crypto" x="250" y="800" width="250" height="56" rx="8"/>
+  <text class="m b" x="264" y="822">encrypt3n reply[0xC8:+0x20]</text>
+  <text class="s mut" x="264" y="842">3DES-CBC, request-derived keys</text>
+  <path class="a ag" d="M375 856 V877" marker-end="url(#hg)"/>
+  <rect class="crypto" x="250" y="878" width="250" height="56" rx="8"/>
+  <text class="m b" x="264" y="900">encrypt3n reply[0x28:+0x120]</text>
+  <text class="s mut" x="264" y="920">3DES-CBC, fixed envelope keys</text>
+  <path class="a ag" d="M375 934 V959" marker-end="url(#hg)"/>
+
+  <path class="a ar" d="M635 744 V959" marker-end="url(#hr)"/>
+  <path class="a ao" d="M873 710 V958" marker-end="url(#ho)"/>
+
+  <!-- reply -->
+  <rect class="box" x="210" y="960" width="766" height="64" rx="8"/>
+  <text class="h" x="224" y="984">HTTP/1.0 200 OK · Content-Type: image/gif · Connection: close</text>
+  <text class="s mut" x="224" y="1006">same framing as Apache's force-response-1.0 (keeps the PS2 from error 106) · sent back as TLS 1.0 records</text>
+  <path class="a an" d="M210 992 H135" marker-end="url(#hn)"/>
+  <text class="lbl" x="172" y="984" text-anchor="middle">4 · reply</text>
+
+  <!-- legend -->
+  <path class="a ag" d="M24 1072 H56"/>
+  <text class="s" x="64" y="1076">captured packet replayed</text>
+  <path class="a ao" d="M234 1072 H266"/>
+  <text class="s" x="274" y="1076"><tspan class="m">-force-success</tspan> path</text>
+  <path class="a ar" d="M430 1072 H462"/>
+  <text class="s" x="470" y="1076">error.raw (auth failed)</text>
+  <path class="a ab" d="M630 1072 H662"/>
+  <text class="s" x="670" y="1076">DNS region hint for the certificate</text>
+  <text class="s mut" x="24" y="1102"><tspan class="b">off</tspan>: replay captures, else error.raw  ·  <tspan class="b">fallback</tspan>: success.raw only where error.raw would be sent  ·  <tspan class="b">always</tspan>: success.raw for every replay request</text>
+  <text class="s tr" x="24" y="1126">⚠ Titles whose DNAS library is 2.80, 3.00 or 3.01 do not authenticate with success.raw (tested on real hardware).</text>
+</svg>

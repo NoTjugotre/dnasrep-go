@@ -30,6 +30,17 @@ A single, dependency-free Go binary that replaces the entire **DNASrep** stack
 Only the standard library is used (`crypto/des`, `crypto/rsa`, `crypto/md5`,
 `crypto/sha1`, `net`, …) – no `go get` required.
 
+## Packet flow
+
+![dnasrep packet flow: DNS redirect, TLS 1.0 handshake, dispatch, captured-packet replay, and the -force-success shortcuts](docs/packet-flow.svg)
+
+A request from the console runs through the DNS redirector, the TLS 1.0
+server and the dispatcher; replay endpoints then look up the captured reply
+(with the install fallback) and, for the connect endpoints, encrypt it. The
+orange paths are [`-force-success`](#force-success-workaround-experimental):
+`fallback` answers with `success.raw` only where `error.raw` would otherwise
+go out, `always` skips the lookup and the encryption entirely.
+
 ## Building
 
 Go 1.19 or newer (the code sticks to that API level on purpose, so it builds
