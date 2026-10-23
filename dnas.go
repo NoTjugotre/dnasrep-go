@@ -207,27 +207,27 @@ func (s *Server) missingPacketReply(gwDir, name string, req []byte) []byte {
 	return s.errorRaw(gwDir)
 }
 
-// successReply is success.raw for req: an install query gets it marked as an
-// install reply, like the captured ones.
+// successReply returns the gateway's success.raw for req, with byte 1 (the DNAS
+// operation) relabelled to match the request: install (0x10), normal (0x18),
+// unique-ID (0x08), the PS2BBN Navigator's 0x22, and so on. This is the generic
+// form of the manual "edit the beginning of success.raw to 01 22" step from the
+// DNASrep notes for uncaptured titles such as PlayStation BB Navigator 0.30
+// (SCPN-60140): one canonical success.raw serves every operation instead of a
+// hand-edited file per title.
+//
+// It is only reached via the -force-success workaround (see Server.ForceSuccess).
+// A gateway without a success.raw falls back to error.raw verbatim — like the
+// normal error path — so the client still gets a well-formed reply.
 func (s *Server) successReply(gwDir string, req []byte) []byte {
-	reply := append([]byte(nil), s.successRaw(gwDir)...)
-	if len(req) > 1 && req[1] == opInstall && len(reply) > 1 {
-		reply[1] = opInstall
-	}
-	return reply
-}
-
-// successRaw returns the gateway's success.raw payload, the counterpart to
-// error.raw. It is only reached via the -force-success workaround (see
-// Server.ForceSuccess); a gateway without a success.raw falls back to the
-// error reply so the client still gets a well-formed answer.
-func (s *Server) successRaw(gwDir string) []byte {
-	b, err := os.ReadFile(filepath.Join(gwDir, "success.raw"))
+	reply, err := os.ReadFile(filepath.Join(gwDir, "success.raw"))
 	if err != nil {
 		log.Printf("https: force-success: %v - falling back to error.raw", err)
 		return s.errorRaw(gwDir)
 	}
-	return b
+	if len(req) > 1 && len(reply) > 1 {
+		reply[1] = req[1]
+	}
+	return reply
 }
 
 // errorRaw returns the gateway's error.raw payload (the "auth failed" reply).

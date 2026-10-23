@@ -123,10 +123,13 @@ func forceSuccessDocRoot(t *testing.T, withSuccess bool) string {
 			t.Fatal(err)
 		}
 	}
-	write("packets/0044d711bb7bfb3a_01180000", []byte("CAPTURED"))
-	write("error.raw", []byte("ERROR"))
+	// Each payload carries a 2-byte DNAS header (01 <op>) so successReply can
+	// relabel byte 1 to the request's op without touching the readable tail the
+	// assertions match on.
+	write("packets/0044d711bb7bfb3a_01180000", []byte("\x01\x18CAPTURED"))
+	write("error.raw", []byte("\x01\x18ERROR"))
 	if withSuccess {
-		write("success.raw", []byte("SUCCESS"))
+		write("success.raw", []byte("\x01\x18SUCCESS"))
 	}
 	return root
 }

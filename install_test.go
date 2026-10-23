@@ -76,12 +76,15 @@ func TestInstallQueryGetsInstallSuccessReply(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := &Server{ForceSuccess: successFallback}
-	for _, op := range []byte{0x10, 0x18} {
+	// success.raw is relabelled with the request's op byte for every operation,
+	// including the PS2BBN Navigator's 0x22 (PlayStation BB Navigator 0.30,
+	// SCPN-60140) that the DNASrep notes describe as "edit success.raw to 01 22".
+	for _, op := range []byte{0x10, 0x18, 0x08, 0x22} {
 		request := make([]byte, 308)
 		request[0], request[1] = 0x01, op
 		got := s.connectReply(gw, request)
-		if len(got) != len(success) || got[1] != op {
-			t.Errorf("query op %#x: success reply % x, want byte 1 = %#x", op, got, op)
+		if len(got) != len(success) || got[0] != 0x01 || got[1] != op {
+			t.Errorf("query op %#x: success reply % x, want it to start 01 %02x", op, got, op)
 		}
 	}
 }

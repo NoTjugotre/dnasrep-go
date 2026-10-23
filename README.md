@@ -135,10 +135,16 @@ counterpart: it lives next to `error.raw`, one per gateway
 ./dnasrep -force-success=always       # blunt test mode
 ```
 
-Both modes cover all replay endpoints (`v2.5_i-connect`, its HDD twin `v2.1_d-connect`, and `v2.5_others`), and
-`success.raw` is sent verbatim — no 3DES envelope is applied, exactly as with
-`error.raw`. If a gateway has no `success.raw`, the request falls back to
-`error.raw` and a warning is logged. Overridden requests are logged as
+Both modes cover all replay endpoints (`v2.5_i-connect`, its HDD twin
+`v2.1_d-connect`, and `v2.5_others`). `success.raw` is sent without the 3DES
+envelope (exactly as `error.raw`), except that byte 1 — the DNAS operation — is
+relabelled to match the request: a normal query gets `01 18`, an install query
+`01 10`, the PS2BBN Navigator `01 22`, and so on. A single canonical
+`success.raw` therefore serves every operation, so titles whose notes say to
+"edit the beginning of `success.raw` to `01 22`" (e.g. PlayStation BB Navigator
+0.30, SCPN-60140) need no per-title hand-editing. If a gateway has no
+`success.raw`, the request falls back to `error.raw` verbatim and a warning is
+logged. Overridden requests are logged as
 `https: force-success: no capture "<id>_<qrytype>" - answering with success.raw`
 (`fallback`) or `https: force-success: answering <path> with success.raw`
 (`always`).
