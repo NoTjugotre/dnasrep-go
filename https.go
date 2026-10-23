@@ -27,6 +27,10 @@ type Server struct {
 	// for titles that were never captured for the DNASforever project; see
 	// README ("Force-success workaround").
 	ForceSuccess successMode
+
+	// Proxies forwards non-DNAS paths to HTTP backends (-proxy), longest
+	// prefix first.
+	Proxies []proxyRule
 }
 
 // clientIP strips the port from a "host:port" address, returning just the host.
